@@ -9,12 +9,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalWindowInfo
 import org.tiqian.compose.CjkSelectionDocument
 import org.tiqian.compose.CjkSelectionContainer
@@ -54,6 +57,7 @@ fun TiqianMarkdownSurface(
 ) {
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     var viewportHeightPx by remember { mutableIntStateOf(windowHeightPx) }
+    var viewportTopInWindowPx by remember { mutableFloatStateOf(0f) }
     val requestedOwnerKeys = remember(document) { mutableStateMapOf<Any, Unit>() }
     val selectionState = rememberCjkSelectionState()
     val placedBlocks = remember(document, footnotePlacement) {
@@ -72,6 +76,13 @@ fun TiqianMarkdownSurface(
             surfaceOwnsScroll = enableScroll,
             measuredSurfaceHeightPx = viewportHeightPx,
             windowHeightPx = windowHeightPx,
+        ),
+        // `OwnedScrollViewportCoordinates`: an internally scrolling surface can sit below fixed
+        // host chrome, so its viewport is [top, top + height] rather than [0, height]. An
+        // externally scrolling surface still uses the window viewport and therefore keeps zero.
+        viewportTopInWindowPx = markdownSurfaceViewportTopInWindowPx(
+            surfaceOwnsScroll = enableScroll,
+            measuredSurfaceTopInWindowPx = viewportTopInWindowPx,
         ),
         scrollInProgress = scrollState.isScrollInProgress,
         scrollOffsetPx = currentScrollOffsetPx,
@@ -119,13 +130,25 @@ fun TiqianMarkdownSurface(
             article()
         }
     }
+    val viewportModifier = modifier
+        .onSizeChanged { viewportHeightPx = it.height }
+        .let { measuredModifier ->
+            if (enableScroll) {
+                measuredModifier.onGloballyPositioned { coordinates ->
+                    val top = coordinates.positionInWindow().y
+                    if (top != viewportTopInWindowPx) viewportTopInWindowPx = top
+                }
+            } else {
+                measuredModifier
+            }
+        }
 
     if (imageProvider == null) {
-        Box(modifier.onSizeChanged { viewportHeightPx = it.height }) { selectableArticle() }
+        Box(viewportModifier) { selectableArticle() }
     } else {
         MarkdownImageViewerHost(
             imageProvider = imageProvider,
-            modifier = modifier.onSizeChanged { viewportHeightPx = it.height },
+            modifier = viewportModifier,
             presentation = imageViewerPresentation,
             viewerActions = imageViewerActions,
         ) {
@@ -146,3 +169,8 @@ internal fun markdownViewportHeightPx(
     // at this boundary; global block coordinates still account for headers and other host content.
     windowHeightPx
 }.coerceAtLeast(1)
+
+internal fun markdownSurfaceViewportTopInWindowPx(
+    surfaceOwnsScroll: Boolean,
+    measuredSurfaceTopInWindowPx: Float,
+): Float = if (surfaceOwnsScroll) measuredSurfaceTopInWindowPx else 0f

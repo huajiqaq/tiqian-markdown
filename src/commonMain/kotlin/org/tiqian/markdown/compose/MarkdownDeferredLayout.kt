@@ -39,6 +39,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.layout.onLayoutRectChanged
 import androidx.compose.ui.layout.onSizeChanged
@@ -61,6 +62,7 @@ import kotlin.math.ceil
 
 internal data class MarkdownDeferredLayout(
     val viewportHeightPx: Int,
+    val viewportTopInWindowPx: Float,
     val scrollInProgress: Boolean,
     val scrollOffsetPx: () -> Int,
     val requestedOwnerKeys: Set<Any>,
@@ -71,6 +73,52 @@ internal data class MarkdownDeferredLayout(
 )
 
 internal val LocalMarkdownDeferredLayout = staticCompositionLocalOf<MarkdownDeferredLayout?> { null }
+
+internal data class MarkdownViewportRangePx(
+    val top: Float,
+    val bottom: Float,
+)
+
+/**
+ * Maps the window-space viewport into document-content coordinates.
+ *
+ * `OwnedScrollViewportCoordinates` keeps fixed host chrome out of the visible range: when the
+ * surface starts below the window origin, both viewport edges must move down by that same inset.
+ */
+internal fun markdownViewportRangeRelativeToContent(
+    viewportTopInWindowPx: Float,
+    viewportHeightPx: Int,
+    contentOriginInScrollPx: Float,
+    scrollOffsetPx: Int,
+): MarkdownViewportRangePx {
+    val contentTopInWindowPx = contentOriginInScrollPx
+        .takeUnless { it.isNaN() }
+        ?.minus(scrollOffsetPx)
+        // Before global-position calibration, assume content begins at the owned viewport rather
+        // than at window y=0. This may compose an extra header-adjacent block, but can never skip
+        // the document start merely because fixed host chrome sits above the surface.
+        ?: viewportTopInWindowPx - scrollOffsetPx
+    val viewportTop = viewportTopInWindowPx - contentTopInWindowPx
+    return MarkdownViewportRangePx(
+        top = viewportTop,
+        bottom = viewportTop + viewportHeightPx.coerceAtLeast(1),
+    )
+}
+
+internal fun markdownViewportRangeClampedToContent(
+    viewportRange: MarkdownViewportRangePx,
+    viewportHeightPx: Int,
+    contentHeightPx: Long,
+): MarkdownViewportRangePx {
+    val height = viewportHeightPx.coerceAtLeast(1)
+    val maximumTop = (contentHeightPx - height)
+        .coerceAtLeast(0L)
+        .coerceAtMost(Int.MAX_VALUE.toLong())
+        .toFloat()
+    val requestedTop = viewportRange.top.takeIf { it.isFinite() } ?: 0f
+    val top = requestedTop.coerceIn(0f, maximumTop)
+    return MarkdownViewportRangePx(top = top, bottom = top + height)
+}
 
 internal fun deferredMarkdownBlockIndices(
     estimatedHeightsDp: List<Float>,
@@ -101,6 +149,36 @@ internal fun deferredMarkdownBlockIndices(
     }
     return if (first < 0) IntRange.EMPTY else first..last
 }
+
+internal fun deferredMarkdownBlockIndicesFromPx(
+    blockHeightsPx: List<Int>,
+    visibleTopPx: Float,
+    visibleBottomPx: Float,
+    viewportHeightPx: Int,
+    prefetchViewports: Float = 0f,
+): IntRange {
+    if (blockHeightsPx.isEmpty()) return IntRange.EMPTY
+    val prefetchPx = viewportHeightPx.coerceAtLeast(1) * prefetchViewports
+    val targetTopPx = (visibleTopPx - prefetchPx).coerceAtLeast(0f).toDouble()
+    val targetBottomPx = (visibleBottomPx + prefetchPx).coerceAtLeast(0f).toDouble()
+    var topPx = 0.0
+    var first = -1
+    var last = -1
+    blockHeightsPx.forEachIndexed { index, heightPx ->
+        val bottomPx = topPx + heightPx.coerceAtLeast(0)
+        if (bottomPx >= targetTopPx && topPx <= targetBottomPx) {
+            if (first < 0) first = index
+            last = index
+        }
+        topPx = bottomPx
+    }
+    return if (first < 0) IntRange.EMPTY else first..last
+}
+
+internal fun shouldUpdateMarkdownMeasuredHeight(
+    cachedHeightPx: Int?,
+    measuredHeightPx: Int,
+): Boolean = measuredHeightPx >= 0 && cachedHeightPx != measuredHeightPx
 
 internal fun estimateMarkdownBlockHeightDp(
     block: MarkdownBlock,
@@ -189,6 +267,7 @@ internal fun DeferredMarkdownBlocks(
     val viewportHeightPx = deferredLayout.viewportHeightPx
         .takeIf { it > 0 }
         ?: windowHeightPx
+    val viewportTopInWindowPx = deferredLayout.viewportTopInWindowPx
     val stateHolder = rememberSaveableStateHolder()
     val measuredHeightsPx = remember(blocks, style, prelayoutWidth, density.density, density.fontScale) {
         // Observability marker: fires only when this retention map is (re)created — repeated
@@ -205,6 +284,7 @@ internal fun DeferredMarkdownBlocks(
     var layoutWidthPx by remember(prelayoutWidth, density.density) {
         mutableIntStateOf(with(density) { prelayoutWidth.roundToPx() }.coerceAtLeast(1))
     }
+    val viewportRangeHolder = remember { MarkdownViewportRangeHolder() }
     val footnoteMarkerWidths = rememberFootnoteMarkerWidths(blocks, style)
     val measureWidthHolder = remember(blocks) { MarkdownMeasureWidthHolder() }
     var contentOriginInScrollPx by remember { mutableFloatStateOf(Float.NaN) }
@@ -231,20 +311,27 @@ internal fun DeferredMarkdownBlocks(
     // Compose only re-enters the subcomposition measure path when that range actually changes.
     val visibleRange by remember(
         viewportHeightPx,
+        viewportTopInWindowPx,
         density.density,
         deferredLayout.scrollOffsetPx,
     ) {
         derivedStateOf {
             val scrollOffsetPx = deferredLayout.scrollOffsetPx()
-            val currentTopInWindowPx = contentOriginInScrollPx
-                .takeUnless { it.isNaN() }
-                ?.minus(scrollOffsetPx)
-                ?: -scrollOffsetPx.toFloat()
+            val viewportRange = markdownViewportRangeRelativeToContent(
+                viewportTopInWindowPx = viewportTopInWindowPx,
+                viewportHeightPx = viewportHeightPx,
+                contentOriginInScrollPx = contentOriginInScrollPx,
+                scrollOffsetPx = scrollOffsetPx,
+            )
+            // This plain holder is refreshed while the derived range observes ScrollState, but
+            // reading it from measure does not subscribe measure to every pixel of scrolling.
+            // A range transition still invalidates measure and carries the matching pixel range.
+            viewportRangeHolder.range = viewportRange
             deferredMarkdownBlockIndices(
                 estimatedHeightsDp = currentBlockHeightsDp,
                 density = density.density,
-                visibleTopPx = -currentTopInWindowPx,
-                visibleBottomPx = viewportHeightPx - currentTopInWindowPx,
+                visibleTopPx = viewportRange.top,
+                visibleBottomPx = viewportRange.bottom,
                 viewportHeightPx = viewportHeightPx,
             )
         }
@@ -320,6 +407,7 @@ internal fun DeferredMarkdownBlocks(
         density.density,
         density.fontScale,
         viewportHeightPx,
+        viewportTopInWindowPx,
         mathRuntime,
         inlineSlots,
         measurementSession,
@@ -368,10 +456,12 @@ internal fun DeferredMarkdownBlocks(
                     )
                 }.collect { snapshot ->
                     val currentScrollOffsetPx = snapshot.first
-                    val currentTop = snapshot.second
-                        .takeUnless { it.isNaN() }
-                        ?.minus(currentScrollOffsetPx)
-                        ?: -currentScrollOffsetPx.toFloat()
+                    val viewportRange = markdownViewportRangeRelativeToContent(
+                        viewportTopInWindowPx = viewportTopInWindowPx,
+                        viewportHeightPx = viewportHeightPx,
+                        contentOriginInScrollPx = snapshot.second,
+                        scrollOffsetPx = currentScrollOffsetPx,
+                    )
                     val measuredByBlockKey = snapshot.third.entries.associate { (key, height) ->
                         key.second to height
                     }
@@ -383,8 +473,8 @@ internal fun DeferredMarkdownBlocks(
                     latestVisibleRange = deferredMarkdownBlockIndices(
                         estimatedHeightsDp = latestHeightsPx.map { with(density) { it.toDp().value } },
                         density = density.density,
-                        visibleTopPx = -currentTop,
-                        visibleBottomPx = viewportHeightPx - currentTop,
+                        visibleTopPx = viewportRange.top,
+                        visibleBottomPx = viewportRange.bottom,
                         viewportHeightPx = viewportHeightPx,
                     )
                     latestForward = currentScrollOffsetPx >= previousScrollOffsetPx
@@ -463,32 +553,10 @@ internal fun DeferredMarkdownBlocks(
             },
     ) { constraints ->
         val width = constraints.maxWidth
-        val blockHeights = blocks.indices.map { index ->
+        val blockHeights = blocks.indices.mapTo(mutableListOf()) { index ->
             measuredHeightsPx[width to blockKeys[index]] ?: estimatedHeightsPx[index]
         }
-        val blockTops = IntArray(blocks.size)
-        var totalHeight = 0L
-        blockHeights.forEachIndexed { index, height ->
-            blockTops[index] = totalHeight.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            totalHeight += height
-        }
-        // `AnchoredHeightCorrection`: block positions accumulate from the document top, so ANY
-        // resolved-height change above the first visible block (estimate→measured swap, image
-        // arrival) moves every later block — the reader sees their content jump. Pin the anchor
-        // block by handing the scroll owner exactly the anchor's document-position delta in the
-        // same measure pass, then re-anchor to the current first visible block.
-        if (blocks.isNotEmpty() && !visibleRange.isEmpty()) {
-            val anchorIndex = scrollAnchor.key
-                ?.let { key -> blockKeys.indexOf(key) }
-                ?.takeIf { it >= 0 }
-            if (anchorIndex != null) {
-                val delta = blockTops[anchorIndex] - scrollAnchor.topPx
-                if (delta != 0) deferredLayout.compensateScrollBy(delta)
-            }
-            val nextAnchor = visibleRange.first.coerceIn(0, blocks.lastIndex)
-            scrollAnchor.key = blockKeys[nextAnchor]
-            scrollAnchor.topPx = blockTops[nextAnchor]
-        }
+        var localTotalHeight = blockHeights.sumOf { height -> height.toLong() }
         val childConstraints = constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity)
         // `NearViewportMaterialization`: while the scroll is settled, keep blocks around the
         // visible range composed and truly measured before they scroll on-screen, admitting a
@@ -550,75 +618,151 @@ internal fun DeferredMarkdownBlocks(
             }
             first..last
         }
-        var materializationBudget = if (materializationSettled.value) {
+        val materializationBudget = if (materializationSettled.value) {
             NearViewportMaterializationPerPass
         } else {
             ScrollAheadMaterializationPerPass
         }
         measureWidthHolder.widthPx = width
-        val placeables = buildList {
-            blocks.forEachIndexed { index, block ->
-                val ownerKey = blockKeys[index]
-                val isRequested = ownerKey in deferredLayout.requestedOwnerKeys
-                val isMeasured = (width to ownerKey) in measuredHeightsPx
-                val materialize = index in materializeRange &&
-                    (isMeasured || materializationBudget-- > 0)
-                val wantsComposition = index in visibleRange || isRequested || materialize
-                if (!wantsComposition) return@forEachIndexed
-                val saveableKey = ownerKey.toSaveableMarkdownBlockKey()
-                // `MemoizedBlockContent`: subcompose content must be the SAME lambda instance
-                // across measure passes — an inline lambda here is a fresh instance every pass,
-                // which forces every composed block to RECOMPOSE on every scroll frame (~10
-                // block compositions and ~4 display-list re-records per frame measured on
-                // SD835). The cached lambda reads the pass width through [measureWidthHolder]
-                // instead of capturing it.
-                val content = blockContents.getOrPut(ownerKey) {
-                    @Composable {
-                        stateHolder.SaveableStateProvider(saveableKey) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .onSizeChanged { size ->
-                                        val passWidth = measureWidthHolder.widthPx
-                                        if (
-                                            size.height > 0 &&
-                                            measuredHeightsPx[passWidth to ownerKey] != size.height
-                                        ) {
-                                            measuredHeightsPx[passWidth to ownerKey] = size.height
-                                        }
-                                    },
+        val placeables = mutableMapOf<Int, Placeable>()
+        fun measureBlock(index: Int): Placeable = placeables.getOrPut(index) {
+            val ownerKey = blockKeys[index]
+            val saveableKey = ownerKey.toSaveableMarkdownBlockKey()
+            // `MemoizedBlockContent`: subcompose content must be the SAME lambda instance
+            // across measure passes — an inline lambda here is a fresh instance every pass,
+            // which forces every composed block to RECOMPOSE on every scroll frame (~10
+            // block compositions and ~4 display-list re-records per frame measured on
+            // SD835). The cached lambda reads the pass width through [measureWidthHolder]
+            // instead of capturing it.
+            val content = blockContents.getOrPut(ownerKey) {
+                @Composable {
+                    stateHolder.SaveableStateProvider(saveableKey) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onSizeChanged { size ->
+                                    val passWidth = measureWidthHolder.widthPx
+                                    if (shouldUpdateMarkdownMeasuredHeight(
+                                            cachedHeightPx = measuredHeightsPx[passWidth to ownerKey],
+                                            measuredHeightPx = size.height,
+                                        )
+                                    ) {
+                                        measuredHeightsPx[passWidth to ownerKey] = size.height
+                                    }
+                                },
+                        ) {
+                            CompositionLocalProvider(
+                                LocalMarkdownSelectionRetentionKey provides ownerKey,
+                                LocalMarkdownPrecomputedLayouts provides precomputedLayouts,
+                                LocalMarkdownPrecomputedTableWidths provides precomputedTableWidths,
                             ) {
-                                CompositionLocalProvider(
-                                    LocalMarkdownSelectionRetentionKey provides ownerKey,
-                                    LocalMarkdownPrecomputedLayouts provides precomputedLayouts,
-                                    LocalMarkdownPrecomputedTableWidths provides precomputedTableWidths,
-                                ) {
-                                    MarkdownBlockItem(
-                                        index = index,
-                                        blocks = blocks,
-                                        style = style,
-                                        slots = slots,
-                                        inlineSlots = inlineSlots,
-                                        onLinkClick = onLinkClick,
-                                        onFootnoteClick = onFootnoteClick,
-                                        topLevelProseWidth = topLevelProseWidth,
-                                        footnoteMarkerWidth = footnoteMarkerWidths[index],
-                                    )
-                                }
+                                MarkdownBlockItem(
+                                    index = index,
+                                    blocks = blocks,
+                                    style = style,
+                                    slots = slots,
+                                    inlineSlots = inlineSlots,
+                                    onLinkClick = onLinkClick,
+                                    onFootnoteClick = onFootnoteClick,
+                                    topLevelProseWidth = topLevelProseWidth,
+                                    footnoteMarkerWidth = footnoteMarkerWidths[index],
+                                )
                             }
                         }
                     }
                 }
-                val placeable = subcompose(ownerKey, content).single().measure(childConstraints)
-                add(blockTops[index] to placeable)
             }
+            subcompose(ownerKey, content).single().measure(childConstraints).also { placeable ->
+                val previousHeight = blockHeights[index]
+                blockHeights[index] = placeable.height
+                localTotalHeight += placeable.height.toLong() - previousHeight
+            }
+        }
+        val mandatoryIndices = blocks.indices.filter { index ->
+            index in visibleRange || blockKeys[index] in deferredLayout.requestedOwnerKeys
+        }
+        mandatoryIndices.forEach(::measureBlock)
+        materializeRange
+            .filter { index -> (width to blockKeys[index]) in measuredHeightsPx }
+            .forEach(::measureBlock)
+        val forwardMaterializationOrder =
+            (visibleRange.last + 1..materializeRange.last) +
+                (visibleRange.first - 1 downTo materializeRange.first)
+        val backwardMaterializationOrder =
+            (visibleRange.first - 1 downTo materializeRange.first) +
+                (visibleRange.last + 1..materializeRange.last)
+        (if (forward) forwardMaterializationOrder else backwardMaterializationOrder)
+            .asSequence()
+            .filter { index ->
+                index in blocks.indices &&
+                    index !in mandatoryIndices &&
+                    (width to blockKeys[index]) !in measuredHeightsPx
+            }
+            .take(materializationBudget)
+            .forEach(::measureBlock)
+
+        // `SynchronousVisibleFallback`: a newly composed block often resolves shorter than its
+        // estimate. Freezing its old slot until onSizeChanged schedules another pass leaves the
+        // remainder blank and can expose one additional estimated slot per frame during a fast
+        // wheel or scrollbar jump. Adopt measured heights immediately, recompute the real visible
+        // range, and measure any newly exposed block in this same pass. The set only grows, so the
+        // loop terminates after at most one admission per document block and never expands the
+        // ScrollState viewport or accessibility range.
+        val requestedViewportRange = viewportRangeHolder.range
+        var passVisibleRange = visibleRange
+        var remainingVisibleAdmissions = SynchronousVisibleFallbackAdmissionLimit
+        while (blocks.isNotEmpty()) {
+            val viewportRange = markdownViewportRangeClampedToContent(
+                viewportRange = requestedViewportRange,
+                viewportHeightPx = viewportHeightPx,
+                contentHeightPx = localTotalHeight,
+            )
+            val correctedVisibleRange = deferredMarkdownBlockIndicesFromPx(
+                blockHeightsPx = blockHeights,
+                visibleTopPx = viewportRange.top,
+                visibleBottomPx = viewportRange.bottom,
+                viewportHeightPx = viewportHeightPx,
+            )
+            val missingVisibleBlocks = correctedVisibleRange.filterNot(placeables::containsKey)
+            passVisibleRange = correctedVisibleRange
+            if (missingVisibleBlocks.isEmpty()) break
+            val admittedBlocks = missingVisibleBlocks.take(remainingVisibleAdmissions)
+            if (admittedBlocks.isEmpty()) break
+            admittedBlocks.forEach(::measureBlock)
+            remainingVisibleAdmissions -= admittedBlocks.size
+        }
+
+        val blockTops = IntArray(blocks.size)
+        var totalHeight = 0L
+        blockHeights.forEachIndexed { index, height ->
+            blockTops[index] = totalHeight.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            totalHeight += height
+        }
+        // `AnchoredHeightCorrection`: block positions accumulate from the document top, so ANY
+        // resolved-height change above the first visible block (estimate→measured swap, image
+        // arrival) moves every later block — the reader sees their content jump. Pin the anchor
+        // block by handing the scroll owner exactly the anchor's document-position delta in the
+        // same measure pass, then re-anchor to the current first visible block.
+        if (blocks.isNotEmpty() && !passVisibleRange.isEmpty()) {
+            val anchorIndex = scrollAnchor.key
+                ?.let { key -> blockKeys.indexOf(key) }
+                ?.takeIf { it >= 0 }
+            if (anchorIndex != null) {
+                val delta = blockTops[anchorIndex] - scrollAnchor.topPx
+                if (delta != 0) deferredLayout.compensateScrollBy(delta)
+            }
+            val nextAnchor = passVisibleRange.first.coerceIn(0, blocks.lastIndex)
+            scrollAnchor.key = blockKeys[nextAnchor]
+            scrollAnchor.topPx = blockTops[nextAnchor]
         }
         val resolvedHeight = totalHeight
             .coerceAtMost(Int.MAX_VALUE.toLong())
             .toInt()
             .coerceIn(constraints.minHeight, constraints.maxHeight)
         layout(width.coerceIn(constraints.minWidth, constraints.maxWidth), resolvedHeight) {
-            placeables.forEach { (top, placeable) -> placeable.placeRelative(0, top) }
+            placeables.forEach { (index, placeable) ->
+                placeable.placeRelative(0, blockTops[index])
+            }
         }
     }
 }
@@ -638,6 +782,10 @@ private class MarkdownMeasureWidthHolder {
     var widthPx: Int = 0
 }
 
+private class MarkdownViewportRangeHolder {
+    var range: MarkdownViewportRangePx = MarkdownViewportRangePx(top = 0f, bottom = 1f)
+}
+
 private class MarkdownScrollAnchor {
     var key: Any? = null
     var topPx: Int = 0
@@ -651,6 +799,10 @@ private class MarkdownScrollAnchor {
 // during a scroll (in quarter-viewports), and how many new blocks one pass may admit.
 private const val ScrollAheadMaterializationViewportQuarters = 3
 private const val ScrollAheadMaterializationPerPass = 1
+
+// Visible content remains mandatory, but malformed/custom documents with hundreds of zero-height
+// estimates must not turn one correction pass into an unbounded synchronous whole-document render.
+private const val SynchronousVisibleFallbackAdmissionLimit = 64
 
 // `MaterializationSettleHysteresis`: quiet time required before the composed window may widen
 // from the directional scroll strip to the settled ±viewport window. Longer than any inter-swipe

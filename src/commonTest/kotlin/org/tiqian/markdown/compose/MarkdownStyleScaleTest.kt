@@ -11,7 +11,9 @@ import org.tiqian.markdown.MarkdownSourceSpan
 import org.tiqian.markdown.MarkdownText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class MarkdownStyleScaleTest {
     @Test
@@ -34,6 +36,104 @@ class MarkdownStyleScaleTest {
                 surfaceOwnsScroll = true,
                 measuredSurfaceHeightPx = 600,
                 windowHeightPx = 800,
+            ),
+        )
+    }
+
+    @Test
+    fun externallyScrolledSurfaceKeepsWindowViewportOrigin() {
+        assertEquals(
+            0f,
+            markdownSurfaceViewportTopInWindowPx(
+                surfaceOwnsScroll = false,
+                measuredSurfaceTopInWindowPx = 120f,
+            ),
+        )
+    }
+
+    @Test
+    fun internallyScrolledViewportAccountsForFixedChromeAboveSurface() {
+        val range = markdownViewportRangeRelativeToContent(
+            viewportTopInWindowPx = 120f,
+            viewportHeightPx = 600,
+            contentOriginInScrollPx = 120f,
+            scrollOffsetPx = 400,
+        )
+
+        assertEquals(MarkdownViewportRangePx(top = 400f, bottom = 1_000f), range)
+    }
+
+    @Test
+    fun uncalibratedInternalViewportDoesNotTreatFixedChromeAsScrolledContent() {
+        val range = markdownViewportRangeRelativeToContent(
+            viewportTopInWindowPx = 120f,
+            viewportHeightPx = 600,
+            contentOriginInScrollPx = Float.NaN,
+            scrollOffsetPx = 0,
+        )
+
+        assertEquals(MarkdownViewportRangePx(top = 0f, bottom = 600f), range)
+    }
+
+    @Test
+    fun calibratedViewportAccountsForHeaderInsideSurface() {
+        val range = markdownViewportRangeRelativeToContent(
+            viewportTopInWindowPx = 120f,
+            viewportHeightPx = 600,
+            contentOriginInScrollPx = 200f,
+            scrollOffsetPx = 400,
+        )
+
+        assertEquals(MarkdownViewportRangePx(top = 320f, bottom = 920f), range)
+    }
+
+    @Test
+    fun measuredPixelHeightImmediatelyExposesTheNextVisibleBlock() {
+        assertEquals(
+            0..0,
+            deferredMarkdownBlockIndices(
+                estimatedHeightsDp = listOf(800f, 800f),
+                density = 1f,
+                visibleTopPx = 0f,
+                visibleBottomPx = 600f,
+                viewportHeightPx = 600,
+            ),
+        )
+        assertEquals(
+            0..1,
+            deferredMarkdownBlockIndicesFromPx(
+                blockHeightsPx = listOf(200, 800),
+                visibleTopPx = 0f,
+                visibleBottomPx = 600f,
+                viewportHeightPx = 600,
+            ),
+        )
+    }
+
+    @Test
+    fun viewportAtEstimatedDocumentEndClampsAfterHeightCorrection() {
+        assertEquals(
+            MarkdownViewportRangePx(top = 400f, bottom = 1_000f),
+            markdownViewportRangeClampedToContent(
+                viewportRange = MarkdownViewportRangePx(top = 900f, bottom = 1_500f),
+                viewportHeightPx = 600,
+                contentHeightPx = 1_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun zeroHeightBlockIsRetainedAsAMeasuredResult() {
+        assertTrue(
+            shouldUpdateMarkdownMeasuredHeight(
+                cachedHeightPx = null,
+                measuredHeightPx = 0,
+            ),
+        )
+        assertFalse(
+            shouldUpdateMarkdownMeasuredHeight(
+                cachedHeightPx = 0,
+                measuredHeightPx = 0,
             ),
         )
     }

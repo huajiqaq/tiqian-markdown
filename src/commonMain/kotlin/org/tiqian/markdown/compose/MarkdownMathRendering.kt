@@ -38,6 +38,7 @@ import org.jetbrains.compose.resources.getSystemResourceEnvironment
 import org.tiqian.math.compose.TiqianMath
 import org.tiqian.math.compose.TiqianMathFormula
 import org.tiqian.math.compose.TiqianMathFormulaCanvas
+import org.tiqian.math.compose.TiqianMathLogicalFragmentCanvas
 import org.tiqian.math.compose.TiqianMathFormulaPreparer
 import org.tiqian.math.compose.createTiqianMathFormulaPreparer
 import org.tiqian.math.compose.rememberLeteMathFontFace
@@ -212,8 +213,17 @@ internal fun prepareDefaultMarkdownInlineMath(
         authorColorBackdrop = backdrop,
     )
     val layout = formula.layoutResult ?: return null
+    // PositiveAdvanceHostContract: preserve the source through the existing source presentation
+    // when the paragraph cannot represent this formula. Do not invent an epsilon-width object.
+    if (formula.presentationMetrics()?.widthPx?.let { it > 0f } != true) return null
     val sourceRanges = layout.partitionSource(expression)
-    val fragments = if (sourceRanges != null) groupFragmentIndices(layout.fragments).map { group ->
+    val groups = groupFragmentIndices(layout.fragments)
+    val logicalFragments = groups.size > 1 && layout.fragments.any { it.leadingKernPx < 0f }
+    if (groups.any { group ->
+        val metrics = if (logicalFragments) formula.logicalFragmentMetrics(group) else formula.presentationMetrics(group)
+        metrics == null || metrics.widthPx <= 0f
+    }) return null
+    val fragments = if (sourceRanges != null) groups.map { group ->
         val groupSource = MarkdownTextRange(sourceRanges[group.first].start, sourceRanges[group.last].endExclusive)
         val sourceFragment = expression.substring(groupSource.start, groupSource.endExclusive)
         MarkdownInlineFragment(
@@ -225,9 +235,16 @@ internal fun prepareDefaultMarkdownInlineMath(
                 trailingFragment = layout.fragments[group.last],
                 density = density,
                 fontSizePx = fontSizePx,
+                logicalFragments = logicalFragments,
             ),
         )
     } else emptyList()
+
+    if (fragments.any { fragment ->
+        val width = checkNotNull(fragment.content.metrics).widthPx
+        val boundary = fragment.content.trailingBoundary
+        boundary.shrinkCapacityPx > width || boundary.lineEndDiscardableAdvancePx > width
+    }) return null
 
     return tiqianMathInlineContent(
         sourceExpression = expression,
@@ -244,7 +261,9 @@ internal fun prepareDefaultMarkdownInlineMath(
  * Binds engine fragments into inline units: a closing delimiter or punctuation joins the preceding
  * unit, and an atom following an opening delimiter joins it, so an inline object never starts with a
  * mark kinsoku forbids at a wrapped line head (`,` `)` `]`). Operators stay their own unit and carry
- * the break after them. The engine's per-atom fragment model is unchanged; grouping is consumer-side.
+ * the break after them. SignedKernInlineBinding keeps zero-width fragments with their neighbours,
+ * except that a legal operator boundary stays open: its kern joins the following unit instead.
+ * The engine's per-atom fragment model is unchanged; grouping is consumer-side.
  */
 private fun groupFragmentIndices(fragments: List<MathInlineFragment>): List<IntRange> {
     val groups = mutableListOf<MutableList<Int>>()
@@ -253,7 +272,9 @@ private fun groupFragmentIndices(fragments: List<MathInlineFragment>): List<IntR
         val bindsToPrevious = groups.isNotEmpty() && (
             fragment.atomClass == MathAtomClass.Closing ||
                 fragment.atomClass == MathAtomClass.Punctuation ||
-                previous?.atomClass == MathAtomClass.Opening
+                previous?.atomClass == MathAtomClass.Opening ||
+                (fragment.box.width == 0f && previous?.breakAfter == null) ||
+                previous?.box?.width == 0f
         )
         if (bindsToPrevious) groups.last().add(index) else groups.add(mutableListOf(index))
     }
@@ -268,9 +289,12 @@ private fun tiqianMathInlineContent(
     density: androidx.compose.ui.unit.Density,
     fontSizePx: Float,
     layoutFragments: List<MarkdownInlineFragment> = emptyList(),
+    logicalFragments: Boolean = false,
 ): MarkdownInlineContent {
     val presentation = checkNotNull(
-        if (fragmentIndices == null) formula.presentationMetrics() else formula.presentationMetrics(fragmentIndices),
+        if (fragmentIndices == null) formula.presentationMetrics()
+        else if (logicalFragments) formula.logicalFragmentMetrics(fragmentIndices)
+        else formula.presentationMetrics(fragmentIndices),
     )
     val metrics = MarkdownInlineMetrics(
         widthPx = presentation.widthPx,
@@ -307,6 +331,8 @@ private fun tiqianMathInlineContent(
     ) {
         if (fragmentIndices == null) {
             TiqianMathFormulaCanvas(formula = formula)
+        } else if (logicalFragments) {
+            TiqianMathLogicalFragmentCanvas(formula = formula, fragmentIndices = fragmentIndices)
         } else {
             TiqianMathFormulaCanvas(formula = formula, fragmentIndices = fragmentIndices)
         }

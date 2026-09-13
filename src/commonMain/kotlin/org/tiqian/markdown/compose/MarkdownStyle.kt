@@ -224,6 +224,10 @@ data class MarkdownStyle(
     val displayBlockSpacing: Dp = 24.dp,
     val displayBlockSpacingBodyLines: Float = 1f,
     val proseMeasure: MarkdownProseMeasure = MarkdownProseMeasure(),
+    /** Hosts can select marker alignment without replacing list layout. Null retains ordinal/bullet defaults. */
+    val listMarkerAlignment: org.tiqian.core.LastLineAlignment? = null,
+    /** Nested prose inherits the parent right edge independently of last-line alignment. */
+    val insetProse: Boolean = false,
     val quoteBarColor: Color = Color(0xFFD0D7DE),
     val quoteBarWidth: Dp = 3.dp,
     val quoteContentPadding: Dp = 12.dp,
@@ -392,7 +396,8 @@ data class MarkdownCodeHighlightStyle(
     }
 }
 
-internal fun MarkdownStyle.heading(level: Int): TextStyle {
+/** Resolves heading typography for hosts that place paragraphs outside the Markdown renderer. */
+fun MarkdownStyle.heading(level: Int): TextStyle {
     val override = when (level) {
         1 -> heading1
         2 -> heading2
@@ -420,12 +425,17 @@ internal fun MarkdownStyle.heading(level: Int): TextStyle {
 }
 
 internal fun MarkdownStyle.headingGapBodyLines(previous: MarkdownBlock, next: MarkdownBlock): Float? =
-    headingSpacing.linesBetween(
+    headingGapBodyLines(
         previousLevel = (previous as? MarkdownHeading)?.level,
         nextLevel = (next as? MarkdownHeading)?.level,
     )
 
-internal fun MarkdownStyle.quoteContentStyle(): MarkdownStyle {
+/** Heading spacing in body lines; null means the host should use ordinary block spacing. */
+fun MarkdownStyle.headingGapBodyLines(previousLevel: Int?, nextLevel: Int?): Float? =
+    headingSpacing.linesBetween(previousLevel, nextLevel)
+
+/** Resolves the inherited prose style inside a quote. */
+fun MarkdownStyle.quoteContentStyle(): MarkdownStyle {
     val bodyFontSize = body.fontSize.requireSp("MarkdownStyle.body.fontSize")
     val resolvedFontSize = quoteText.fontSize.resolveAgainst(
         base = bodyFontSize,
@@ -443,6 +453,7 @@ internal fun MarkdownStyle.quoteContentStyle(): MarkdownStyle {
         label = "MarkdownStyle.quoteText.lineHeight",
     )
     return copy(
+        insetProse = true,
         body = body.merge(quoteText).copy(
             fontSize = resolvedFontSize,
             lineHeight = resolvedLineHeight,
@@ -450,7 +461,8 @@ internal fun MarkdownStyle.quoteContentStyle(): MarkdownStyle {
     )
 }
 
-internal fun MarkdownStyle.footnoteContentTextStyle(): TextStyle {
+/** Resolves note typography independently of its inline, sheet, or page-bottom placement. */
+fun MarkdownStyle.footnoteContentTextStyle(): TextStyle {
     val bodyFontSize = body.fontSize.requireSp("MarkdownStyle.body.fontSize")
     val resolvedFontSize = footnote.fontSize.resolveAgainst(
         base = bodyFontSize,

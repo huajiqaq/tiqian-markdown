@@ -110,10 +110,20 @@ class MarkdownListAlignmentTest {
         }
     }
 
-    private fun render(document: MarkdownRenderDocument, width: Int): PixelMap =
+    @Test
+    fun hostCanLeftAlignOrdinalMarkersWithoutReplacingListLayout() {
+        val pixels = render(document(start = 9, itemTexts = listOf("正文", "正文")), 600,
+            style.copy(listMarkerAlignment = org.tiqian.core.LastLineAlignment.Start))
+        val firstStart = pixels.inkMinX(0 until 48, yRange = 0 until 36)
+        val secondStart = pixels.inkMinX(0 until 48, yRange = 42 until 78)
+        assertTrue(firstStart < 4 && secondStart < 4)
+        assertTrue(pixels.inkMaxX(0 until 48, yRange = 0 until 36) < pixels.inkMaxX(0 until 48, yRange = 42 until 78))
+    }
+
+    private fun render(document: MarkdownRenderDocument, width: Int, renderStyle: MarkdownStyle = style): PixelMap =
         ImageComposeScene(width = width, height = 120) {
             Box(Modifier.fillMaxSize().background(Color.White)) {
-                TiqianMarkdown(document = document, style = style)
+                TiqianMarkdown(document = document, style = renderStyle)
             }
         }.use { scene ->
             scene.render(0L).toComposeImageBitmap().toPixelMap()

@@ -194,21 +194,14 @@ internal fun markdownBlockSpacing(
     },
 ): Dp? {
     if (previousBlock == null) return null
-    val headingGapBodyLines = style.headingGapBodyLines(previousBlock, block)
     val adjacentLists = previousBlock is MarkdownList && block is MarkdownList
     val adjacentDisplayBlock = previousBlock.isMarkdownDisplayBlock() || block.isMarkdownDisplayBlock()
     return when {
         block is MarkdownFootnoteDefinition -> 0.dp
         bodyLineHeight != null -> {
-            val ordinaryGapBodyLines = when {
-                headingGapBodyLines != null -> headingGapBodyLines
-                adjacentLists -> style.listBlockSpacingBodyLines
-                compact -> style.compactBlockSpacingBodyLines
-                else -> style.blockSpacingBodyLines
-            }
-            bodyLineHeight * maxOf(
-                ordinaryGapBodyLines,
-                if (adjacentDisplayBlock) style.displayBlockSpacingBodyLines else 0f,
+            bodyLineHeight * style.blockGapBodyLines(
+                (previousBlock as? MarkdownHeading)?.level, (block as? MarkdownHeading)?.level,
+                adjacentDisplayBlock, adjacentLists, compact,
             )
         }
         adjacentLists -> style.listBlockSpacing
@@ -239,11 +232,7 @@ internal fun rememberFootnoteMarkerWidths(
         markerTextStyle.toCoreTextStyle(density)
     }
     val paragraphStyle = remember {
-        ParagraphStyle(
-            firstLineIndent = 0.ic,
-            lineLengthGrid = LineLengthGrid(enabled = false),
-            lastLineAlignment = LastLineAlignment.Start,
-        )
+        proseMarkerParagraphStyle(LastLineAlignment.Start)
     }
     return remember(blocks, coreMarkerTextStyle, paragraphStyle, measurer, density) {
         buildMap {
@@ -312,27 +301,31 @@ internal fun MarkdownBlock(
             // subcompose-backed content (display math, tables), which quotes may contain.
             Row(
                 Modifier.fillMaxWidth().drawBehind {
-                    val widthPx = barWidth.toPx()
-                    val x = if (layoutDirection == LayoutDirection.Rtl) size.width - widthPx else 0f
+                    val bar = proseQuoteBar((barWidth + style.quoteContentPadding).toPx(), 0f, size.height,
+                        barWidth.toPx(), style.quoteContentPadding.toPx())
+                    val x = if (layoutDirection == LayoutDirection.Rtl) size.width - bar.left - bar.width else bar.left
                     drawRect(
                         color = barColor,
-                        topLeft = Offset(x, 0f),
-                        size = Size(widthPx, size.height),
+                        topLeft = Offset(x, bar.top),
+                        size = Size(bar.width, bar.height),
                     )
                 },
             ) {
-            MarkdownBlocks(
-                blocks = block.blocks,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = barWidth + style.quoteContentPadding),
-                style = quoteStyle,
-                slots = slots,
-                inlineSlots = inlineSlots,
-                onLinkClick = onLinkClick,
-                onFootnoteClick = onFootnoteClick,
-                compact = true,
-            )
+                ProseInsetLayout(
+                    with(LocalDensity.current) { (barWidth + style.quoteContentPadding).toPx() },
+                    Modifier.weight(1f),
+                ) {
+                    MarkdownBlocks(
+                        blocks = block.blocks,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = quoteStyle,
+                        slots = slots,
+                        inlineSlots = inlineSlots,
+                        onLinkClick = onLinkClick,
+                        onFootnoteClick = onFootnoteClick,
+                        compact = true,
+                    )
+                }
             }
         }
 
@@ -387,18 +380,10 @@ private fun MarkdownListBlock(
         )
     }
     val markerStartParagraphStyle = remember {
-        ParagraphStyle(
-            firstLineIndent = 0.ic,
-            lineLengthGrid = LineLengthGrid(enabled = false),
-            lastLineAlignment = LastLineAlignment.Start,
-        )
+        proseMarkerParagraphStyle(LastLineAlignment.Start)
     }
     val markerEndParagraphStyle = remember {
-        ParagraphStyle(
-            firstLineIndent = 0.ic,
-            lineLengthGrid = LineLengthGrid(enabled = false),
-            lastLineAlignment = LastLineAlignment.End,
-        )
+        proseMarkerParagraphStyle(LastLineAlignment.End)
     }
     val markerTextStyle = remember(style.body) { style.body.toCjkTextStyle() }
     val coreMarkerTextStyle = remember(markerTextStyle, density) {
@@ -457,10 +442,9 @@ private fun MarkdownListBlock(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val longMeasure = maxWidth > longMeasureBreakpoint
         val minimumContentIndent = if (longMeasure) style.listLongContentIndent else style.listContentIndent
-        val minimumContentIndentWidth = with(density) {
-            minimumContentIndent.toPx(coreMarkerTextStyle.fontSize).toDp()
+        val minimumMarkerRegionWidth = with(density) {
+            style.minimumListIndentPx(maxWidth.toPx(), coreMarkerTextStyle.fontSize, widestMarkerWidthPx).toDp()
         }
-        val minimumMarkerRegionWidth = maxOf(markerWidth, minimumContentIndentWidth)
         val markerLeadingSpace = with(density) {
             (minimumContentIndent + -markerAlignmentBand)
                 .toPx(coreMarkerTextStyle.fontSize)
@@ -480,7 +464,7 @@ private fun MarkdownListBlock(
                     modifier = Modifier.fillMaxWidth(),
                 ) { markerModifier, contentModifier ->
                     val marker = markers[index]
-                    val ordinalMarker = block.ordered && marker is MarkdownListMarker.Text
+                    val ordinalMarker = (block.ordered || style.listMarkerAlignment != null) && marker is MarkdownListMarker.Text
                     when (marker) {
                         is MarkdownListMarker.Text -> if (ordinalMarker) {
                             MarkdownSelectionScope(markdownSelectionKey(item.metadata.key, "marker")) {
@@ -488,7 +472,7 @@ private fun MarkdownListBlock(
                                     text = marker.value,
                                     modifier = markerModifier,
                                     style = style.body,
-                                    paragraphStyle = markerEndParagraphStyle,
+                                    paragraphStyle = style.listMarkerAlignment?.let(::proseMarkerParagraphStyle) ?: markerEndParagraphStyle,
                                     measurer = markerMeasurer,
                                 )
                             }
@@ -519,7 +503,7 @@ private fun MarkdownListBlock(
                     MarkdownBlocks(
                         blocks = item.blocks,
                         modifier = contentModifier,
-                        style = style,
+                        style = style.copy(insetProse = true),
                         slots = slots,
                         inlineSlots = inlineSlots,
                         onLinkClick = onLinkClick,
@@ -532,7 +516,8 @@ private fun MarkdownListBlock(
     }
 }
 
-internal data class WholeCellListGeometry(
+/** Shared marker/content geometry for hosts that place list rows themselves. */
+data class WholeCellListGeometry(
     val markerRegionWidthPx: Int,
     val contentWidthPx: Int,
 )
@@ -543,27 +528,15 @@ internal data class WholeCellListGeometry(
  * absorbs the sub-cell remainder, so marker region + right-aligned content box
  * exactly equals the body measure.
  */
-internal fun wholeCellListGeometryPx(
+fun wholeCellListGeometryPx(
     bodyMeasurePx: Int,
     minimumMarkerRegionWidthPx: Int,
     contentCellWidthPx: Float,
 ): WholeCellListGeometry {
-    val minimumMarkerWidth = minimumMarkerRegionWidthPx
-        .coerceIn(0, bodyMeasurePx.coerceAtLeast(0))
-    val available = (bodyMeasurePx - minimumMarkerWidth).coerceAtLeast(0)
-    if (available == 0 || !contentCellWidthPx.isFinite() || contentCellWidthPx <= 0f) {
-        return WholeCellListGeometry(bodyMeasurePx, available)
-    }
-    val cells = floor(available / contentCellWidthPx).toInt()
-    val contentWidthPx = if (cells < 1) {
-        available
-    } else {
-        floor(cells * contentCellWidthPx).toInt().coerceIn(1, available)
-    }
-    return WholeCellListGeometry(
-        markerRegionWidthPx = bodyMeasurePx - contentWidthPx,
-        contentWidthPx = contentWidthPx,
-    )
+    val geometry = wholeCellListGeometryPx(bodyMeasurePx.coerceAtLeast(0).toFloat(),
+        minimumMarkerRegionWidthPx.coerceAtLeast(0).toFloat(), contentCellWidthPx)
+    val contentWidth = floor(geometry.contentWidth).toInt()
+    return WholeCellListGeometry(bodyMeasurePx - contentWidth, contentWidth)
 }
 
 /** Marker/content row whose content box stays on its own whole-cell grid. */
@@ -599,20 +572,17 @@ private fun WholeCellContentMarkerRow(
             placeable[FirstBaseline].takeUnless { it == AlignmentLine.Unspecified } ?: 0
         val markerBaseline = baselineOf(markerPlaceable)
         val contentBaseline = baselineOf(contentPlaceable)
+        val row = alignProseFirstLines(contentBaseline.toFloat(), (contentPlaceable.height - contentBaseline).toFloat(),
+            markerBaseline.toFloat(), (markerPlaceable.height - markerBaseline).toFloat())
         val rowBaseline = maxOf(markerBaseline, contentBaseline)
-        val rowHeight = (
-            rowBaseline + maxOf(
-                markerPlaceable.height - markerBaseline,
-                contentPlaceable.height - contentBaseline,
-            )
-        ).coerceIn(constraints.minHeight, constraints.maxHeight)
+        val rowHeight = row.height.roundToInt().coerceIn(constraints.minHeight, constraints.maxHeight)
         layout(
             width = rowWidth,
             height = rowHeight,
             alignmentLines = mapOf(FirstBaseline to rowBaseline),
         ) {
-            markerPlaceable.placeRelative(0, rowBaseline - markerBaseline)
-            contentPlaceable.placeRelative(rowWidth - contentWidth, rowBaseline - contentBaseline)
+            markerPlaceable.placeRelative(0, row.markerTop.roundToInt())
+            contentPlaceable.placeRelative(rowWidth - contentWidth, row.bodyTop.roundToInt())
         }
     }
 }
@@ -831,11 +801,7 @@ fun DefaultMarkdownFootnoteDefinition(
         markerTextStyle.toCoreTextStyle(density)
     }
     val markerParagraphStyle = remember {
-        ParagraphStyle(
-            firstLineIndent = 0.ic,
-            lineLengthGrid = LineLengthGrid(enabled = false),
-            lastLineAlignment = LastLineAlignment.Start,
-        )
+        proseMarkerParagraphStyle(LastLineAlignment.Start)
     }
     val singleMarkerWidth = remember(block.index, coreMarkerTextStyle, markerParagraphStyle, markerMeasurer, density) {
         val measuredWidth = markerMeasurer.measure(

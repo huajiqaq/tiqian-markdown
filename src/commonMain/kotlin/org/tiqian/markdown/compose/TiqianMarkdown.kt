@@ -123,7 +123,10 @@ fun TiqianMarkdown(
                 availableWidthPx.takeIf(Float::isFinite)?.let { width ->
                     val availableCells = width / bodyCoreTextStyle.fontSize
                     val resolvedCells = resolveMarkdownProseMeasureCells(availableCells, style.proseMeasure)
-                    with(density) { (resolvedCells * bodyCoreTextStyle.fontSize).toDp() }
+                    val frameWidth = remember(width, resolvedCells, bodyCoreTextStyle.fontSize, paragraphMeasurer) {
+                        measureProseFrameWidth(paragraphMeasurer, resolvedCells * bodyCoreTextStyle.fontSize, bodyCoreTextStyle.fontSize)
+                    }
+                    with(density) { proseFrameContainerWidth(frameWidth, width).toDp() }
                 }
             } else {
                 null

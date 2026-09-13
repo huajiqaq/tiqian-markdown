@@ -98,7 +98,8 @@ internal fun MarkdownTextBlock(
         resolved.backgrounds.toCjkInlineBackgrounds()
     }
     val textModifier = modifier.markdownInlineInteractionSemantics(resolved.interactions)
-    if (paragraphStyle == null) {
+    val effectiveParagraph = if (markdownStyle.insetProse) insetProseParagraphStyle(paragraphStyle ?: ParagraphStyle(firstLineIndent = org.tiqian.core.Ic.Zero)) else paragraphStyle
+    if (effectiveParagraph == null) {
         CjkText(
             text = resolved.annotated,
             modifier = textModifier,
@@ -114,7 +115,7 @@ internal fun MarkdownTextBlock(
             text = resolved.annotated,
             modifier = textModifier,
             style = textStyle,
-            paragraphStyle = paragraphStyle,
+            paragraphStyle = effectiveParagraph,
             inlineObjects = tiqianInlineObjects,
             inlineBackgrounds = inlineBackgrounds,
             inlineDecorations = inlineDecorations,

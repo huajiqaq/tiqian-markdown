@@ -168,9 +168,9 @@ internal fun precomputeMarkdownBlockEntries(
     // content padding inset the nested prose width, and nested blocks render with the quote's
     // content style. Entries are keyed by each nested block's own selection key.
     is MarkdownBlockQuote -> {
-        val innerWidthPx = with(density) {
-            widthPx - style.quoteBarWidth.roundToPx() - style.quoteContentPadding.roundToPx()
-        }.coerceAtLeast(1f)
+        val innerWidthPx = insetProseGeometry(widthPx, with(density) {
+            (style.quoteBarWidth + style.quoteContentPadding).roundToPx().toFloat()
+        }).contentWidth.coerceAtLeast(1f)
         val quoteStyle = style.quoteContentStyle()
         val nested = block.blocks.map { nestedBlock ->
             precomputeMarkdownBlockEntries(
@@ -396,7 +396,7 @@ private fun precomputeMarkdownTextLayout(
             constraints = LayoutConstraints(maxWidth = widthPx),
             density = density,
             style = textStyle,
-            paragraphStyle = paragraphStyle,
+            paragraphStyle = if (style.insetProse) insetProseParagraphStyle(paragraphStyle) else paragraphStyle,
             inlineObjects = resolved.toCjkInlineObjects(density),
             inlineDecorations = resolved.decorations.toCjkInlineDecorations(),
             inlineBackgrounds = resolved.backgrounds.toCjkInlineBackgrounds(),

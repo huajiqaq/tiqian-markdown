@@ -25,10 +25,12 @@ import androidx.compose.ui.input.pointer.PointerButtons
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.use
+import org.tiqian.compose.CjkSelectionState
 import org.tiqian.compose.rememberCjkSelectionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
 class MarkdownHostSelectionStateTest {
@@ -45,6 +47,7 @@ class MarkdownHostSelectionStateTest {
     fun hostMenuItemReadsSelectionThroughHoistedState() {
         val representation = RecordingRepresentation()
         var invokedWith: String? = null
+        var state: CjkSelectionState? = null
         val document = MarkdownRenderDocument(
             blocks = listOf(
                 paragraph("context word", 0),
@@ -54,6 +57,7 @@ class MarkdownHostSelectionStateTest {
 
         ImageComposeScene(width = 360, height = 200) {
             val selectionState = rememberCjkSelectionState()
+            state = selectionState
             CompositionLocalProvider(LocalContextMenuRepresentation provides representation) {
                 ContextMenuDataProvider(
                     items = {
@@ -75,12 +79,18 @@ class MarkdownHostSelectionStateTest {
                 (0 until pixels.width).any { x -> pixels[x, y].red < 0.5f }
             } + 6
             val inkX = (0 until pixels.width).first { x -> pixels[x, firstLineY].red < 0.5f }
+            val selectionState = assertNotNull(state)
+            assertTrue(selectionState.selectAll())
+            scene.render()
+            val selected = assertNotNull(selectionState.selectedText?.text)
+            assertTrue("context word" in selected)
+
             scene.secondaryClick(Offset(inkX + 12f, firstLineY.toFloat()))
             scene.render()
 
             val items = assertNotNull(representation.openItems, "context menu did not open")
             items().single { it.label == "Host" }.onClick()
-            assertEquals("context", invokedWith)
+            assertEquals(selected, invokedWith)
         }
     }
 

@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalWindowInfo
 import org.tiqian.compose.CjkSelectionDocument
 import org.tiqian.compose.CjkSelectionContainer
+import org.tiqian.compose.CjkSelectionState
 import org.tiqian.compose.rememberCjkSelectionState
 import org.tiqian.markdown.DefaultMarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownCodeHighlighter
@@ -34,6 +35,7 @@ import org.tiqian.markdown.placeFootnotes
  *
  * The renderer owns scrolling, whole-document selection and its image-viewer session. Hosts only
  * adapt their document model and supply platform services through slots and [imageProvider].
+ * Pass [selectionState] to read the current selection, for example from host context-menu items.
  */
 @Composable
 fun TiqianMarkdownSurface(
@@ -44,6 +46,7 @@ fun TiqianMarkdownSurface(
     inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
     scrollState: ScrollState,
     selectable: Boolean = true,
+    selectionState: CjkSelectionState = rememberCjkSelectionState(),
     enableScroll: Boolean = true,
     imageProvider: MarkdownImageProvider? = null,
     imageViewerPresentation: MarkdownImageViewerPresentation = MarkdownImageViewerPresentation.PlatformWindow,
@@ -59,7 +62,6 @@ fun TiqianMarkdownSurface(
     var viewportHeightPx by remember { mutableIntStateOf(windowHeightPx) }
     var viewportTopInWindowPx by remember { mutableFloatStateOf(0f) }
     val requestedOwnerKeys = remember(document) { mutableStateMapOf<Any, Unit>() }
-    val selectionState = rememberCjkSelectionState()
     val placedBlocks = remember(document, footnotePlacement) {
         markdownTraceSection("TiqianMarkdownSurface.placeFootnotes") {
             document.placeFootnotes(footnotePlacement)

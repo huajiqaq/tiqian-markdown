@@ -21,6 +21,8 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalWindowInfo
 import org.tiqian.compose.CjkSelectionDocument
 import org.tiqian.compose.CjkSelectionContainer
+import org.tiqian.compose.CjkSelectionMenuAction
+import org.tiqian.compose.CjkSelectionMenuContent
 import org.tiqian.compose.rememberCjkSelectionState
 import org.tiqian.markdown.DefaultMarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownCodeHighlighter
@@ -52,6 +54,17 @@ fun TiqianMarkdownSurface(
     onFootnoteClick: ((String) -> Unit)? = null,
     footnotePlacement: MarkdownFootnotePlacement = MarkdownFootnotePlacement.AfterBlock,
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
+    /**
+     * 追加到选区菜单（复制/全选之后）的宿主动作。
+     *
+     * 宿主借此把“喜欢片段”“评论片段”等业务动作放进平台的选择菜单，
+     * 无需访问库内部的选区状态。
+     */
+    selectionActions: List<CjkSelectionMenuAction> = emptyList(),
+    /**
+     * 宿主自绘选区菜单；提供后不再显示平台菜单，便于与其它渲染引擎保持同一视觉。
+     */
+    selectionMenuContent: (@Composable (CjkSelectionMenuContent) -> Unit)? = null,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
 ) {
@@ -124,6 +137,8 @@ fun TiqianMarkdownSurface(
                 state = selectionState,
                 scrollState = scrollState,
                 document = selectionDocument,
+                selectionActions = selectionActions,
+                selectionMenuContent = selectionMenuContent,
                 content = article,
             )
         } else {

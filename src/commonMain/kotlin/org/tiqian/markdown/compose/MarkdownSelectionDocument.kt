@@ -19,7 +19,17 @@ import org.tiqian.markdown.MarkdownTaskState
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownUnsupportedBlock
 
-internal data class MarkdownSelectionKey(
+/**
+ * Identity of a built-in Markdown selection fragment. An opaque selection fragment key can be
+ * checked with `as? MarkdownSelectionKey` and [node] matched to the corresponding node's
+ * `metadata.key` in the same document. The node may be nested (for example, a list paragraph or
+ * table cell), rather than a top-level block.
+ *
+ * [role] distinguishes fragment purposes: `text` for paragraphs and headings, `marker` for list
+ * and footnote markers, `cell` for table cells, and `caption` for captions. Other roles are possible.
+ * This key identifies a fragment; selection range offsets must be retained separately.
+ */
+data class MarkdownSelectionKey(
     val node: MarkdownNodeKey,
     val role: String = "text",
 )

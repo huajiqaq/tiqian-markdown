@@ -89,10 +89,13 @@ header、嵌套正文和超过屏幕高度的段落都使用实际位置。外�
 原有的可见范围与预排规则。未取得布局或未完成滚动的请求在 5 秒后返回 `false`；没有可见面积的
 命中矩形也返回 `false`，例如字体未能提供字形宽度或文本只包含零宽字符时。
 
-默认高亮仅覆盖当前命中，颜色为 `Color.Yellow.copy(alpha = 0.3f)`；设置
-`highlightActiveMatch = false` 可关闭高亮而保留定位。搜索不会修改宿主的 `selectionState`。
-查询改变、`clear()`、文档替换、Surface 卸载或 `searchState` 改为 `null` 时，待处理请求取消，
-当前高亮和目标 owner 一同清除。新的定位请求会取消上一个请求；调用方协程取消会正常传播。
+默认高亮仅覆盖当前命中，颜色为 `Color.Yellow.copy(alpha = 0.3f)`，可通过 `highlightColor` 调整。
+设置 `highlightAllMatches = true` 可同时高亮其余命中，默认关闭；普通命中颜色默认为
+`Color.Yellow.copy(alpha = 0.15f)`，可通过 `allMatchHighlightColor` 调整。当前颜色替代普通颜色，不叠色。
+`highlightActiveMatch = false` 只关闭当前命中的特殊样式而保留定位；若开启全部高亮，该命中仍使用普通颜色。
+全部高亮只复用已布局片段，不额外保留或测量离屏 owner。搜索不会修改宿主的 `selectionState`。
+查询改变时结果更新，当前高亮、目标 owner 和待处理请求清除；`clear()`、文档替换、Surface 卸载或
+`searchState` 改为 `null` 同样清除旧状态。新的定位请求会取消上一个请求；调用方协程取消会正常传播。
 过期结果返回 `false`。卸载保留查询文字，重新绑定时重新匹配；绑定之前调用 `setQuery()` 也有效。
 一个搜索状态不能同时绑定两个 Surface。
 

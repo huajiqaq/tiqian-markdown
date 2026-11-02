@@ -36,6 +36,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.tiqian.compose.CjkSelectionState
 import org.tiqian.compose.rememberCjkSelectionState
+import org.tiqian.core.getBoundingBoxes
 import org.tiqian.markdown.MarkdownBlock
 import org.tiqian.markdown.MarkdownBlockQuote
 import org.tiqian.markdown.MarkdownCodeBlock
@@ -170,7 +171,7 @@ class MarkdownTextSearchTest {
 
     @Test
     fun exactRevealScrollsExternalParentToLongNestedParagraphAndPaintsOnlyActiveRange() = runBlocking {
-        val state = MarkdownTextSearchState()
+        val state = MarkdownTextSearchState().apply { highlightAllMatches = true }
         val scroll = ScrollState(0)
         val nestedText = "引言文字。".repeat(140) + "针叶林" + "结尾文字。".repeat(20)
         val nested = paragraph(1001, nestedText)
@@ -223,9 +224,11 @@ class MarkdownTextSearchTest {
             assertNull(selection.selectedText)
             assertTrue(yellowPixels(scene) > 20, "The actual body match must paint within the viewport")
             state.highlightActiveMatch = false
+            state.highlightAllMatches = false
             advance()
             assertEquals(0, yellowPixels(scene))
             state.highlightActiveMatch = true
+            state.highlightAllMatches = true
             advance()
             assertTrue(yellowPixels(scene) > 20)
             state.setQuery("引言文字。".repeat(140) + "针叶林")
@@ -247,33 +250,74 @@ class MarkdownTextSearchTest {
 
     @Test
     fun revealDoesNotChangeAnExistingNativeSelection() = runBlocking {
-        val state = MarkdownTextSearchState()
+        val state = MarkdownTextSearchState().apply {
+            highlightAllMatches = true
+            allMatchHighlightColor = Color.Yellow.copy(alpha = 0.3f)
+            highlightColor = Color(0xFFFFC107).copy(alpha = 0.7f)
+        }
         lateinit var scope: CoroutineScope
         lateinit var selection: CjkSelectionState
         val scroll = ScrollState(0)
-        val blocks = listOf(paragraph(0, "before needle after"))
-        val article = MarkdownRenderDocument(blocks)
+        val phrase = "needle ".repeat(7).trim()
+        val article = MarkdownRenderDocument(listOf(paragraph(0, "$phrase after $phrase")))
         ImageComposeScene(width = 320, height = 240, coroutineContext = coroutineContext) {
             scope = rememberCoroutineScope()
             selection = rememberCjkSelectionState()
             TiqianMarkdownSurface(
                 document = article, scrollState = scroll, searchState = state,
+                modifier = Modifier.fillMaxSize().background(Color.White),
                 selectionState = selection, style = searchTestStyle(),
             )
         }.use { scene ->
-            repeat(4) { scene.render(it * 16_000_000L); yield() }
+            var frame = 0L
+            suspend fun advance() {
+                Snapshot.sendApplyNotifications()
+                scene.render(frame)
+                frame += 16_000_000L
+                yield()
+            }
+            repeat(4) { advance() }
+            state.setQuery(phrase)
+            advance()
+            assertEquals(2, state.matches.size)
+            assertNull(state.activeMatch)
+            assertTrue(yellowPixels(scene) > 20, "All matches must paint before any reveal")
+            assertEquals(0, yellowPixels(scene, active = true))
+            for (match in state.matches) {
+                assertTrue(selection.selectAll())
+                val selected = selection.selectedText
+                val revealing = scope.async { state.reveal(match) }
+                repeat(60) { if (!revealing.isCompleted) advance() }
+                assertTrue(revealing.isCompleted)
+                assertTrue(revealing.await())
+                assertEquals(selected, selection.selectedText)
+                val target = assertNotNull(state.document?.targets?.get(match.fragmentKey))
+                val layout = assertNotNull(target.layout)
+                val firstLine = assertNotNull(target.firstLineRect(match))
+                val boxes = layout.getBoundingBoxes(match.startInFragment, match.endInFragment)
+                assertTrue(boxes.any { it.top >= firstLine.bottom }, "Match must span multiple actual lines")
+                selection.clearSelection()
+                advance()
+                assertTrue(yellowPixels(scene) > 20, "Other hits must remain light after each jump")
+                assertTrue(yellowPixels(scene, active = true) > 20, "Current hit must be dark yellow")
+            }
+            state.highlightActiveMatch = false
+            advance()
+            assertTrue(yellowPixels(scene) > 20)
+            assertEquals(0, yellowPixels(scene, active = true))
+            state.highlightAllMatches = false
+            advance()
+            assertEquals(0, yellowPixels(scene))
+            state.highlightAllMatches = true
             assertTrue(selection.selectAll())
             val selected = selection.selectedText
-            state.setQuery("needle")
-            val match = state.matches.single()
-            val revealing = scope.async { state.reveal(match) }
-            repeat(60) { if (!revealing.isCompleted) { scene.render((it + 4) * 16_000_000L); yield() } }
-            assertTrue(revealing.isCompleted)
-            assertTrue(revealing.await())
-            assertEquals(selected, selection.selectedText)
             state.clear()
             assertEquals(selected, selection.selectedText)
             assertNull(state.activeMatch)
+            assertTrue(state.matchesByFragment.isEmpty())
+            selection.clearSelection()
+            advance()
+            assertEquals(0, yellowPixels(scene))
         }
         assertNull(state.document)
         assertTrue(state.matches.isEmpty())
@@ -582,12 +626,16 @@ class MarkdownTextSearchTest {
         MarkdownNodeKey(key, listOf(key)), MarkdownSourceSpan(0, 0, 0, 0, 0, 0),
     )
 
-    private fun yellowPixels(scene: ImageComposeScene): Int {
+    private fun yellowPixels(scene: ImageComposeScene, active: Boolean = false): Int {
         val pixels = scene.render().toComposeImageBitmap().toPixelMap()
         var count = 0
         for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
             val color = pixels[x, y]
-            if (color.red > 0.9f && color.green > 0.9f && color.blue in 0.6f..0.8f) count++
+            if (color.red > 0.9f && if (active) {
+                color.green in 0.75f..0.9f && color.blue < 0.4f
+            } else {
+                color.green > 0.9f && color.blue in 0.6f..0.8f
+            }) count++
         }
         return count
     }

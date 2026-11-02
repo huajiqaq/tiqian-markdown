@@ -7,6 +7,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +71,16 @@ class MarkdownTextSearchState internal constructor(
     var activeMatch: MarkdownTextSearchMatch? by mutableStateOf(null)
         private set
     var highlightActiveMatch: Boolean by mutableStateOf(true)
+    var highlightColor: Color by mutableStateOf(Color.Yellow.copy(alpha = 0.3f))
+
+    /** 是否绘制所有匹配的背景；当前匹配启用高亮时只使用 [highlightColor]，不叠色。 */
+    var highlightAllMatches: Boolean by mutableStateOf(false)
+    var allMatchHighlightColor: Color by mutableStateOf(Color.Yellow.copy(alpha = 0.15f))
+
+    // 只缓存结果的分组，不组合、测量或保留离屏 owner。
+    internal val matchesByFragment: Map<Any, List<MarkdownTextSearchMatch>> by derivedStateOf {
+        if (highlightAllMatches) matches.groupBy { it.fragmentKey } else emptyMap()
+    }
 
     internal var requestedOwnerKey: Any? by mutableStateOf(null)
         private set
@@ -297,20 +308,27 @@ internal class MarkdownTextSearchTarget(
             placedLayout = layout
         }
         .drawBehind {
-            if (document.state.highlightActiveMatch) {
-                val match = document.state.activeMatch
-                if (match != null && match.fragmentKey == fragmentKey && document.state.document === document) {
-                    val text = resolvedText
-                    if (text != null) layout?.getBoundingBoxes(
-                        text.sourceToRenderedOffset(match.startInFragment, false),
-                        text.sourceToRenderedOffset(match.endInFragment, true),
-                    )?.forEach { box ->
-                        drawRect(
-                            color = Color.Yellow.copy(alpha = 0.3f),
-                            topLeft = Offset(box.left, box.top),
-                            size = Size(box.right - box.left, box.bottom - box.top),
-                        )
-                    }
+            val state = document.state
+            if (state.document !== document) return@drawBehind
+            val text = resolvedText ?: return@drawBehind
+            val layout = layout ?: return@drawBehind
+            val active = state.activeMatch.takeIf { state.highlightActiveMatch }
+            val matches = if (state.highlightAllMatches) {
+                state.matchesByFragment[fragmentKey].orEmpty()
+            } else {
+                listOfNotNull(active?.takeIf { it.fragmentKey == fragmentKey })
+            }
+            for (match in matches) {
+                val color = if (match === active) state.highlightColor else state.allMatchHighlightColor
+                for (box in layout.getBoundingBoxes(
+                    text.sourceToRenderedOffset(match.startInFragment, false),
+                    text.sourceToRenderedOffset(match.endInFragment, true),
+                )) {
+                    drawRect(
+                        color = color,
+                        topLeft = Offset(box.left, box.top),
+                        size = Size(box.right - box.left, box.bottom - box.top),
+                    )
                 }
             }
         }

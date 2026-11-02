@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -176,12 +177,20 @@ fun DefaultMarkdownImageBlock(
                 } else {
                     null
                 }
-                val imageWidth = widthHint?.dp?.coerceAtMost(maxWidth) ?: maxWidth
-                val captionWidth = maxOf(imageWidth, style.figureCaptionMinimumWidthDp())
+                val naturalWidth = widthHint?.dp?.coerceAtMost(maxWidth) ?: maxWidth
+                val widthLimit = naturalWidth.coerceAtMost(imageContent.maxDisplayWidth)
+                val maxImageHeight = imageContent.maxDisplayHeight
+                val imageWidth = if (ratio != null && ratio > 0f) {
+                    widthLimit.coerceAtMost(maxImageHeight * ratio)
+                } else {
+                    widthLimit
+                }
+                val captionWidth = maxOf(naturalWidth, style.figureCaptionMinimumWidthDp())
                     .coerceAtMost(maxWidth)
                 val imageShape = RoundedCornerShape(style.imageCornerRadius)
                 val imageModifier = Modifier
                     .width(imageWidth)
+                    .then(if (maxImageHeight != Dp.Infinity) Modifier.heightIn(max = maxImageHeight) else Modifier)
                     .then(if (ratio != null && ratio > 0f) Modifier.aspectRatio(ratio) else Modifier)
                     .border(style.imageOutlineWidth, style.imageOutlineColor, imageShape)
                     .clip(imageShape)

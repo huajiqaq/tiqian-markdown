@@ -29,6 +29,8 @@ TiqianMarkdown(
 
 文档转换、自定义样式和图片加载见[架构说明](docs/architecture.md)。
 
+图片 provider 可通过 `MarkdownImageContent(maxDisplayWidth = 560.dp, maxDisplayHeight = 480.dp, ...)` 限制正文预览尺寸。默认不限制；已知图片比例时等比缩小，保留图注与原图查看器的既有行为。具体屏幕断点与预算由应用决定。
+
 ## 体验与构建
 
 ```shell

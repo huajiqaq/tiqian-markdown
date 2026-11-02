@@ -152,7 +152,10 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
-)
+    private val replacements: List<InlineReplacement>,
+) {
+    fun sourceToRenderedOffset(offset: Int, end: Boolean): Int = mapOffset(offset, replacements, end)
+}
 
 internal data class ResolvedTiqianInlineObject(
     val start: Int,
@@ -224,7 +227,7 @@ internal data class ResolvedInlineInteraction(
     val onClick: () -> Unit,
 )
 
-private data class InlineReplacement(
+internal data class InlineReplacement(
     val spanIndex: Int,
     val range: MarkdownTextRange,
     val id: String,
@@ -635,6 +638,7 @@ private fun buildResolvedMarkdownText(
         backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
+        replacements = nonOverlappingReplacements,
     )
 }
 

@@ -21,6 +21,7 @@ import org.tiqian.core.ParagraphStyle
 import org.tiqian.markdown.MarkdownText
 
 private val LocalMarkdownSelectionFragmentKey = staticCompositionLocalOf<Any?> { null }
+private val IgnoreMarkdownTextLayout: (org.tiqian.core.LayoutResult) -> Unit = {}
 
 internal val LocalMarkdownSelectionRetentionKey = staticCompositionLocalOf<Any?> { null }
 
@@ -53,6 +54,7 @@ internal fun MarkdownTextBlock(
     val paragraphMeasurer = rememberMarkdownParagraphMeasurer()
     val selectionFragmentKey = LocalMarkdownSelectionFragmentKey.current
     val precomputed = selectionFragmentKey?.let(LocalMarkdownPrecomputedLayouts.current::get)
+    val searchTarget = rememberMarkdownTextSearchTarget(selectionFragmentKey)
     val footnoteNavigationState = LocalMarkdownFootnoteNavigationState.current
     val currentLinkClick = rememberUpdatedState(onLinkClick)
     val currentFootnoteClick = rememberUpdatedState(onFootnoteClick)
@@ -97,7 +99,14 @@ internal fun MarkdownTextBlock(
     val inlineBackgrounds = remember(resolved.backgrounds) {
         resolved.backgrounds.toCjkInlineBackgrounds()
     }
-    val textModifier = modifier.markdownInlineInteractionSemantics(resolved.interactions)
+    val textModifier = modifier
+        .then(searchTarget?.modifier ?: Modifier)
+        .markdownInlineInteractionSemantics(resolved.interactions)
+    val onTextLayout: (org.tiqian.core.LayoutResult) -> Unit = if (searchTarget == null) {
+        IgnoreMarkdownTextLayout
+    } else remember(searchTarget, resolved) {
+        { layout -> searchTarget.updateLayout(layout, resolved) }
+    }
     val effectiveParagraph = if (markdownStyle.insetProse) insetProseParagraphStyle(paragraphStyle ?: ParagraphStyle(firstLineIndent = org.tiqian.core.Ic.Zero)) else paragraphStyle
     if (effectiveParagraph == null) {
         CjkText(
@@ -109,6 +118,7 @@ internal fun MarkdownTextBlock(
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
             precomputedLayout = precomputed?.layout,
+            onTextLayout = onTextLayout,
         )
     } else {
         CjkText(
@@ -121,6 +131,7 @@ internal fun MarkdownTextBlock(
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
             precomputedLayout = precomputed?.layout,
+            onTextLayout = onTextLayout,
         )
     }
 }

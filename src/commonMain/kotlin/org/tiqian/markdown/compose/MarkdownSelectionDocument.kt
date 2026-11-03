@@ -19,7 +19,8 @@ import org.tiqian.markdown.MarkdownTaskState
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownUnsupportedBlock
 
-internal data class MarkdownSelectionKey(
+/** Logical selection identity: [node] is the original block key and [role] identifies its rendered text surface. */
+data class MarkdownSelectionKey(
     val node: MarkdownNodeKey,
     val role: String = "text",
 )

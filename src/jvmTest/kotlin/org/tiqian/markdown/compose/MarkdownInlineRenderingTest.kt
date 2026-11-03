@@ -67,6 +67,7 @@ import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.Rect
 import org.tiqian.core.TextRange
 import org.tiqian.core.getBoundingBoxes
+import org.tiqian.core.positionedClusters
 import org.tiqian.layout.ExplainableStubParagraphLayoutEngine
 import org.tiqian.layout.LookaheadLineBreaker
 import org.tiqian.layout.ParagraphLayoutEngine
@@ -644,18 +645,81 @@ class MarkdownInlineRenderingTest {
         }.use { scene ->
             val pixels = scene.render(0L).toComposeImageBitmap().toPixelMap()
             val layout = fixture.layouts.last()
-            assertEquals("a@b", layout.input.content.text)
-            val box = layout.getBoundingBoxes(2, 3).single()
+            assertEquals("a@b￼", layout.input.content.text)
+            assertEquals("a[image]b", text.value, "the source text must remain unchanged")
+            val box = layout.inlineObjectBox(TextRange(3, 4))
             assertSingleEndMarker(pixels.markerPixels(), box)
-            val x = ceil(box.right + 3f).toInt()
-            val y = ceil(box.bottom - 6f).toInt()
+            val x = ceil(box.left + 3f).toInt()
+            val y = ceil(box.top).toInt()
             assertEquals(Color.Red, pixels[x + 1, y + 1], "the host Painter must receive the tint")
             assertEquals(Color.White, pixels[x + 6, y + 6], "the Painter's L-shaped path must be retained")
         }
     }
 
     @Test
-    fun customEndMarkerStyleToggleRepaintsWithoutRelayout() {
+    fun customEndMarkerSourceMappingComposesWithInlineReplacementAndBoundaryBias() {
+        for (withImage in listOf(false, true)) {
+            val fixture = EndMarkerFixture()
+            val enabled = mutableStateOf(false)
+            val source = if (withImage) "a[image]b" else "ab"
+            val text = MarkdownText(source, buildList {
+                add(MarkdownTextSpan(MarkdownTextRange(0, 1), MarkdownTextMark.Custom("note")))
+                if (withImage) {
+                    add(MarkdownTextSpan(MarkdownTextRange(1, 8), MarkdownTextMark.InlineImage("inline:test", "image")))
+                    add(MarkdownTextSpan(MarkdownTextRange(1, 8), MarkdownTextMark.Custom("note")))
+                }
+            })
+            val slots = MarkdownInlineSlots(
+                image = { _, _, _ ->
+                    MarkdownInlineContent(
+                        alternateText = "@",
+                        placeholder = Placeholder(24.sp, 24.sp, PlaceholderVerticalAlign.TextCenter),
+                        metrics = MarkdownInlineMetrics(24f, 24f, 24f),
+                    ) {}
+                },
+                custom = { _, _, _ -> MarkdownCustomInlinePresentation(endMarker = endMarker.takeIf { enabled.value }) },
+            )
+            var resolved: ResolvedMarkdownText? = null
+            ImageComposeScene(width = 240, height = 96, density = Density(1f)) {
+                resolved = resolveMarkdownText(
+                    text, endMarkerStyle, endMarkerStyle.body, slots,
+                    onLinkClick = null, onFootnoteClick = null,
+                )
+                fixture.Content(text, slots)
+            }.use { scene ->
+                for ((frame, markerEnabled) in listOf(false, true, false).withIndex()) {
+                    enabled.value = markerEnabled
+                    scene.render(frame * 16_000_000L)
+                    val model = assertNotNull(resolved)
+                    val layout = fixture.layouts.last()
+                    val expected = if (withImage) {
+                        if (markerEnabled) "a\uFFFC@\uFFFCb" else "a@b"
+                    } else {
+                        if (markerEnabled) "a\uFFFCb" else "ab"
+                    }
+                    assertEquals(expected, layout.input.content.text, "LayoutResult uses internal projection offsets")
+                    val sourceStart = source.lastIndexOf('b')
+                    val mappedStart = model.sourceToRenderedOffset(sourceStart, false)
+                    val mappedEnd = model.sourceToRenderedOffset(sourceStart + 1, true)
+                    val expectedStart = expected.lastIndexOf('b')
+                    assertEquals(TextRange(expectedStart, expectedStart + 1), TextRange(mappedStart, mappedEnd))
+                    assertEquals("b", model.annotated.text.substring(mappedStart, mappedEnd))
+                    assertEquals(layout.getBoundingBoxes(expectedStart, expectedStart + 1), layout.getBoundingBoxes(mappedStart, mappedEnd))
+                    assertEquals(1, model.sourceToRenderedOffset(1, true), "a range ending at a marker must exclude the slot")
+                    assertEquals(if (markerEnabled) 2 else 1, model.sourceToRenderedOffset(1, false), "a range starting at a marker must skip the slot")
+                    if (withImage) {
+                        assertEquals("@", model.annotated.text.substring(
+                            model.sourceToRenderedOffset(1, false), model.sourceToRenderedOffset(8, true),
+                        ), "image replacement and both marker boundaries must share one source mapping")
+                    }
+                    assertEquals(source, text.value, "the searchable source must never contain internal slots")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun customEndMarkerStyleToggleReflowsWithStableLogicalText() {
         val fixture = EndMarkerFixture()
         val style = mutableStateOf(endMarkerStyle)
         val text = MarkdownText("toggle", listOf(
@@ -677,17 +741,17 @@ class MarkdownInlineRenderingTest {
             val layoutCount = fixture.layouts.size
             style.value = endMarkerStyle.copy(body = endMarkerStyle.body.copy(color = Color.Blue))
             val enabled = scene.render(16_000_000L).toComposeImageBitmap().toPixelMap()
-            assertSingleEndMarker(enabled.markerPixels(), layout.getBoundingBoxes(5, 6).single())
+            assertSingleEndMarker(enabled.markerPixels(), fixture.layouts.last().inlineObjectBox(TextRange(6, 7)))
             assertTrue((0 until enabled.height).any { y -> (0 until enabled.width).any { x ->
                 val color = enabled[x, y]
                 color.blue > color.red + 0.1f && color.blue > color.green + 0.1f
             } }, "the changed text style must also be painted")
-            assertEquals(layoutCount, fixture.layouts.size, "paint-only changes must not force layout")
-            assertSame(layout, fixture.layouts.last())
+            assertTrue(fixture.layouts.size > layoutCount, "adding a measured marker must invalidate layout")
+            assertEquals("toggle￼", fixture.layouts.last().input.content.text)
             style.value = endMarkerStyle
             val disabled = scene.render(32_000_000L).toComposeImageBitmap().toPixelMap()
             assertEquals(0, disabled.redPixelCount(), "the marker must disappear in the same style update")
-            assertEquals(layoutCount, fixture.layouts.size)
+            assertEquals("toggle", fixture.layouts.last().input.content.text)
             assertTrue((0 until before.height).all { y ->
                 (0 until before.width).all { x -> before[x, y] == disabled[x, y] }
             }, "returning to the initial style must restore the initial pixels")
@@ -710,7 +774,7 @@ class MarkdownInlineRenderingTest {
             val pixels = scene.render(0L).toComposeImageBitmap().toPixelMap()
             val layout = fixture.layouts.last()
             assertTrue(layout.lines.size > 1, "the fixture must really wrap")
-            val box = layout.getBoundingBoxes(value.length - 1, value.length).single()
+            val box = layout.inlineObjectBox(TextRange(value.length, value.length + 1))
             assertSingleEndMarker(pixels.markerPixels(), box)
         }
     }
@@ -731,8 +795,8 @@ class MarkdownInlineRenderingTest {
         }.use { scene ->
             val pixels = scene.render(0L).toComposeImageBitmap().toPixelMap()
             val layout = fixture.layouts.last()
-            val first = layout.getBoundingBoxes(1, 2).single()
-            val second = layout.getBoundingBoxes(3, 4).single()
+            val first = layout.inlineObjectBox(TextRange(2, 3))
+            val second = layout.inlineObjectBox(TextRange(5, 6))
             val split = (first.right + second.right) / 2f
             val points = pixels.markerPixels()
             assertSingleEndMarker(points.filter { it.x < split }, first)
@@ -814,16 +878,15 @@ class MarkdownInlineRenderingTest {
             val layout = fixture.layouts.last()
             val bounds = assertNotNull(fixture.textBounds)
             val box = layout.getBoundingBoxes(3, 4).single()
-            assertEquals(1, layout.lines.size, "the marker must not wrap the source word")
+            assertEquals(2, layout.lines.size, "the measured marker must wrap instead of overlapping the last word")
             assertEquals(0f, bounds.left, 0.01f)
             assertTrue(box.right + 3f + 8f > bounds.width, "the real trailing space must be insufficient")
             val points = pixels.markerPixels()
             assertTrue(points.size in 24..80, "the marker must remain visible at the edge")
-            assertTrue(points.all {
-                it.x >= floor(bounds.right - 8f).toInt() && it.x < ceil(bounds.right).toInt() &&
-                    it.y >= floor(box.bottom - 2f).toInt() && it.y < ceil(box.bottom + 6f).toInt()
-            }, "no Painter pixels may escape the column or the lower fallback box")
-            assertTrue(points.any { it.x == ceil(bounds.right).toInt() - 1 }, "the full marker must fit inside the column")
+            val markerBox = layout.inlineObjectBox(TextRange(4, 5))
+            assertTrue(markerBox.top >= box.bottom, "the marker must own a box on the next line")
+            assertSingleEndMarker(points, markerBox)
+            assertTrue(points.all { it.x < ceil(bounds.right).toInt() }, "Painter pixels must remain inside the column")
         }
     }
 
@@ -883,14 +946,27 @@ class MarkdownInlineRenderingTest {
         }
     }
 
+    /** The selection box spans the line; opaque children use the engine draw origin and their baseline metrics. */
+    private fun LayoutResult.inlineObjectBox(range: TextRange): Rect {
+        val positioned = positionedClusters().single { it.range == range }
+        val metrics = input.inlineObjects.single { it.range == range }
+        return Rect(
+            positioned.drawX,
+            positioned.baseline - metrics.ascent,
+            positioned.drawX + metrics.advance,
+            positioned.baseline + metrics.descent,
+        )
+    }
+
     private fun assertSingleEndMarker(points: List<IntOffset>, box: Rect) {
-        val left = box.right + 3f
-        val top = box.bottom - 6f
+        val left = box.left + 3f
+        val top = box.top
         assertTrue(points.size in 24..80, "the supplied Painter must produce one visible marker")
         assertTrue(points.all {
             it.x >= floor(left).toInt() && it.x < ceil(left + 8f).toInt() &&
                 it.y >= floor(top).toInt() && it.y < ceil(top + 8f).toInt()
-        }, "marker pixels must belong only to the final character's real bounding box")
+        }, "marker pixels must belong only to the measured inline object box: expected=($left,$top)-(${left + 8f},${top + 8f}), " +
+            "pixels=(${points.minOf { it.x }},${points.minOf { it.y }})-(${points.maxOf { it.x } + 1},${points.maxOf { it.y } + 1}), box=$box")
     }
 
     @Composable

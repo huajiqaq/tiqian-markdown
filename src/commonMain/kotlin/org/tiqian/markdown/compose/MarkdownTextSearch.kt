@@ -32,6 +32,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.job
+import org.tiqian.compose.CjkSelectionState
 import org.tiqian.core.LayoutResult
 import org.tiqian.core.getBoundingBoxes
 import org.tiqian.core.getLineForOffset
@@ -88,6 +90,10 @@ class MarkdownTextSearchState internal constructor(
         private set
     private var documentRevision = 0L
     private var revealRequest: Deferred<Boolean>? = null
+    internal var relocation: MarkdownTextSearchRelocation? by mutableStateOf(null)
+        private set
+    internal val selectionInProgress: Boolean
+        get() = document?.selectionState?.activeGestureOwnerKeys?.isNotEmpty() == true
 
     fun setQuery(query: String) {
         if (queryValue == query) return
@@ -110,7 +116,7 @@ class MarkdownTextSearchState internal constructor(
      */
     suspend fun reveal(match: MarkdownTextSearchMatch): Boolean {
         val currentDocument = document ?: return false
-        if (match.documentRevision != documentRevision || matches.none { it === match }) return false
+        if (match.documentRevision != documentRevision || matches.none { it === match } || selectionInProgress) return false
         val fragment = currentDocument.fragments[match.fragmentKey] ?: return false
         cancelReveal()
         activeMatch = match
@@ -122,7 +128,14 @@ class MarkdownTextSearchState internal constructor(
                         currentDocument.targets[match.fragmentKey]?.takeIf { it.isReady }
                     }.filterNotNull().first()
                     val rect = target.firstLineRect(match) ?: return@withTimeoutOrNull false
-                    target.requester.bringIntoView(rect)
+                    if (selectionInProgress) return@withTimeoutOrNull false
+                    val relocating = MarkdownTextSearchRelocation(currentCoroutineContext().job)
+                    relocation = relocating
+                    try {
+                        target.requester.bringIntoView(rect)
+                    } finally {
+                        if (relocation === relocating) relocation = null
+                    }
                     currentCoroutineContext().ensureActive()
                     document === currentDocument && activeMatch === match && target.isReady &&
                         currentDocument.targets[match.fragmentKey] === target
@@ -168,6 +181,7 @@ class MarkdownTextSearchState internal constructor(
     private fun cancelReveal() {
         revealRequest?.cancel()
         revealRequest = null
+        relocation = null
         activeMatch = null
         requestedOwnerKey = null
     }
@@ -246,6 +260,7 @@ internal class MarkdownTextSearchDocument(
     val state: MarkdownTextSearchState,
     blocks: List<MarkdownBlock>,
     slots: MarkdownBlockSlots,
+    val selectionState: CjkSelectionState? = null,
 ) {
     val fragments = linkedMapOf<Any, MarkdownSearchFragment>()
     val targets = mutableStateMapOf<Any, MarkdownTextSearchTarget>()

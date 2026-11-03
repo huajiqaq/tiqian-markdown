@@ -1,6 +1,7 @@
 package org.tiqian.markdown.compose
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
@@ -39,6 +40,7 @@ import org.tiqian.markdown.placeFootnotes
  * Pass [selectionState] to read the current selection, for example from host context-menu items.
  * Optional [searchState] finds and reveals renderer-owned prose without modifying that selection.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TiqianMarkdownSurface(
     document: MarkdownRenderDocument,
@@ -70,8 +72,8 @@ fun TiqianMarkdownSurface(
             document.placeFootnotes(footnotePlacement)
         }
     }
-    val searchDocument = if (searchState == null) null else remember(searchState, placedBlocks, slots) {
-        MarkdownTextSearchDocument(searchState, placedBlocks, slots)
+    val searchDocument = if (searchState == null) null else remember(searchState, placedBlocks, slots, selectionState) {
+        MarkdownTextSearchDocument(searchState, placedBlocks, slots, selectionState)
     }
     // Selection clears on document identity changes. Search/slot toggles do not change its
     // logical text projection, so keep this identity tied only to the placed document.
@@ -115,6 +117,11 @@ fun TiqianMarkdownSurface(
     )
     val article: @Composable () -> Unit = {
         CompositionLocalProvider(
+            LocalBringIntoViewSpec provides if (enableScroll && searchState != null) {
+                rememberMarkdownTextSearchBringIntoViewSpec(searchState)
+            } else {
+                LocalBringIntoViewSpec.current
+            },
             LocalMarkdownDeferredLayout provides deferredLayout,
             LocalMarkdownTextSearchDocument provides searchDocument,
         ) {

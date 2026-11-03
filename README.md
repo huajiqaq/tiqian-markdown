@@ -89,6 +89,23 @@ header、嵌套正文和超过屏幕高度的段落都使用实际位置。外�
 原有的可见范围与预排规则。未取得布局或未完成滚动的请求在 5 秒后返回 `false`；没有可见面积的
 命中矩形也返回 `false`，例如字体未能提供字形宽度或文本只包含零宽字符时。
 
+内部滚动自动将完全屏外的搜索行居中，完全可见时不动，部分可见时使用最近边缘；文档边界可能阻止精确居中。
+外部滚动宿主可在创建滚动容器前复用同一策略，并提供实际遮挡像素：
+
+```kotlin
+val spec = rememberMarkdownTextSearchBringIntoViewSpec(
+    search, obscuredTopPx = toolbarHeightPx, obscuredBottomPx = bottomBarHeightPx,
+)
+CompositionLocalProvider(LocalBringIntoViewSpec provides spec) {
+    Column(Modifier.verticalScroll(scrollState)) {
+        TiqianMarkdownSurface(document, scrollState = scrollState, enableScroll = false, searchState = search)
+    }
+}
+```
+
+策略只在当前搜索定位等待期间生效，选择手势接管时取消定位。普通焦点和选择滚动原样交给
+`fallback`，宿主可以传入已有避遮挡策略。不会把搜索颜色或长期保留的当前命中当成滚动激活条件。
+
 默认高亮仅覆盖当前命中，颜色为 `Color.Yellow.copy(alpha = 0.3f)`，可通过 `highlightColor` 调整。
 设置 `highlightAllMatches = true` 可同时高亮其余命中，默认关闭；普通命中颜色默认为
 `Color.Yellow.copy(alpha = 0.15f)`，可通过 `allMatchHighlightColor` 调整。当前颜色替代普通颜色，不叠色。

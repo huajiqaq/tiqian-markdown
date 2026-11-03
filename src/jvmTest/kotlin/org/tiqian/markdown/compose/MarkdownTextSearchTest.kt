@@ -1,6 +1,8 @@
 package org.tiqian.markdown.compose
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,7 +71,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-@OptIn(ExperimentalComposeUiApi::class)
+@OptIn(ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 class MarkdownTextSearchTest {
     @Test
     fun unicodeWhitespaceCaseAndUtf16OffsetsComeFromRendererFragments() {
@@ -186,17 +188,20 @@ class MarkdownTextSearchTest {
         ImageComposeScene(width = 320, height = 240, coroutineContext = coroutineContext) {
             scope = rememberCoroutineScope()
             selection = rememberCjkSelectionState()
-            Column(Modifier.fillMaxSize().background(Color.White).verticalScroll(scroll)) {
-                // A tall host image/header must be scrolled through by the actual parent chain.
-                Box(Modifier.fillMaxWidth().height(1200.dp).background(Color.Blue))
-                if (shown) TiqianMarkdownSurface(
-                    document = article,
-                    style = style,
-                    scrollState = scroll,
-                    enableScroll = false,
-                    selectionState = selection,
-                    searchState = state,
-                )
+            val searchSpec = rememberMarkdownTextSearchBringIntoViewSpec(state, obscuredTopPx = 20f, obscuredBottomPx = 40f)
+            CompositionLocalProvider(LocalBringIntoViewSpec provides searchSpec) {
+                Column(Modifier.fillMaxSize().background(Color.White).verticalScroll(scroll)) {
+                    // A tall host image/header must be scrolled through by the actual parent chain.
+                    Box(Modifier.fillMaxWidth().height(1200.dp).background(Color.Blue))
+                    if (shown) TiqianMarkdownSurface(
+                        document = article,
+                        style = style,
+                        scrollState = scroll,
+                        enableScroll = false,
+                        selectionState = selection,
+                        searchState = state,
+                    )
+                }
             }
         }.use { scene ->
             var frame = 0L
@@ -223,6 +228,13 @@ class MarkdownTextSearchTest {
             assertEquals(quote.metadata.key, state.requestedOwnerKey)
             assertNull(selection.selectedText)
             assertTrue(yellowPixels(scene) > 20, "The actual body match must paint within the viewport")
+            assertTrue(kotlin.math.abs(yellowCenterY(scene) - 110f) <= 2f, "External search must use the unobscured viewport center")
+            val settled = scroll.value
+            val again = scope.async { state.reveal(match) }
+            repeat(180) { if (!again.isCompleted) advance() }
+            assertTrue(again.await())
+            assertEquals(settled, scroll.value, "A visible match must not move on repeated reveal")
+            assertNull(state.relocation)
             state.highlightActiveMatch = false
             state.highlightAllMatches = false
             advance()
@@ -473,6 +485,13 @@ class MarkdownTextSearchTest {
             repeat(4) { advance() }
             assertTrue(scroll.value > 800, "Actual tall image height must precede the first text line")
             assertTrue(yellowPixels(scene) > 20, "Offset zero must reveal the text, not the document top")
+            assertTrue(kotlin.math.abs(yellowCenterY(scene) - 120f) <= 2f, "Owned scrolling must center the offscreen match")
+            val settled = scroll.value
+            val again = scope.async { state.reveal(match) }
+            repeat(180) { if (!again.isCompleted) advance() }
+            assertTrue(again.await())
+            assertEquals(settled, scroll.value, "An already-visible match must remain still")
+            assertNull(state.relocation)
         }
     }
 
@@ -625,6 +644,21 @@ class MarkdownTextSearchTest {
     private fun metadata(key: Int) = MarkdownNodeMetadata(
         MarkdownNodeKey(key, listOf(key)), MarkdownSourceSpan(0, 0, 0, 0, 0, 0),
     )
+
+    private fun yellowCenterY(scene: ImageComposeScene): Float {
+        val pixels = scene.render().toComposeImageBitmap().toPixelMap()
+        var top = pixels.height
+        var bottom = -1
+        for (y in 0 until pixels.height) for (x in 0 until pixels.width) {
+            val color = pixels[x, y]
+            if (color.red > 0.9f && color.green > 0.9f && color.blue in 0.6f..0.8f) {
+                top = minOf(top, y)
+                bottom = maxOf(bottom, y)
+            }
+        }
+        assertTrue(bottom >= top, "Search must have an actual painted match")
+        return (top + bottom + 1) / 2f
+    }
 
     private fun yellowPixels(scene: ImageComposeScene, active: Boolean = false): Int {
         val pixels = scene.render().toComposeImageBitmap().toPixelMap()

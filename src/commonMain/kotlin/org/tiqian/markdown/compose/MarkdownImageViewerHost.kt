@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.RowScope
@@ -200,10 +201,15 @@ internal fun Modifier.openMarkdownImageOnClick(
     state: MarkdownImageViewerState?,
     block: MarkdownImageBlock,
     gallery: List<MarkdownImageBlock>,
-): Modifier = if (state == null) {
-    this
-} else {
-    markdownClickablePointer().clickable(role = Role.Image) { state.show(block, gallery) }
+    onLongClick: (() -> Unit)? = null,
+): Modifier = when {
+    onLongClick != null -> markdownClickablePointer().combinedClickable(
+        role = Role.Image,
+        onLongClick = onLongClick,
+        onClick = { state?.show(block, gallery) },
+    )
+    state != null -> markdownClickablePointer().clickable(role = Role.Image) { state.show(block, gallery) }
+    else -> this
 }
 
 @Composable

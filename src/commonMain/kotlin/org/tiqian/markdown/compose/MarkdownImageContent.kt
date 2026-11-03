@@ -30,6 +30,8 @@ class MarkdownImageContent(
     val maxDisplayWidth: Dp = Dp.Infinity,
     /** 正文预览高度上限，已知比例时等比缩小；默认不限制。 */
     val maxDisplayHeight: Dp = Dp.Infinity,
+    /** 宿主的正文图片长按动作；默认保持仅点击查看。 */
+    val onLongClick: (() -> Unit)? = null,
     val content: @Composable (Modifier) -> Unit,
 ) {
     init {

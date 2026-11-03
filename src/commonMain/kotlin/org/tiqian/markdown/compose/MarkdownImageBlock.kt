@@ -194,7 +194,7 @@ fun DefaultMarkdownImageBlock(
                     .then(if (ratio != null && ratio > 0f) Modifier.aspectRatio(ratio) else Modifier)
                     .border(style.imageOutlineWidth, style.imageOutlineColor, imageShape)
                     .clip(imageShape)
-                    .openMarkdownImageOnClick(viewerState, block, imageGallery)
+                    .openMarkdownImageOnClick(viewerState, block, imageGallery, imageContent.onLongClick)
                 Column(
                     modifier = Modifier.width(captionWidth),
                     horizontalAlignment = Alignment.CenterHorizontally,

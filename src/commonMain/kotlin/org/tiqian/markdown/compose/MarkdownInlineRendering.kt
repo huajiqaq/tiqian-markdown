@@ -11,6 +11,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -128,6 +129,18 @@ data class MarkdownCustomInlinePresentation(
     val decoration: MarkdownInlineDecoration? = null,
     val onClick: ((text: String) -> Unit)? = null,
     val accessibilityLabel: ((text: String) -> String)? = null,
+    /** 仅在范围最后一个文字端点绘制，不插入占位符、不参与断行或可选文本。 */
+    val endMarker: MarkdownInlineEndMarker? = null,
+)
+
+/** 宿主提供的纯绘制末尾标记；位置使用已排版的末字符几何。 */
+data class MarkdownInlineEndMarker(
+    val painter: Painter,
+    val color: Color,
+    val size: Dp = 8.dp,
+    val gap: Dp = 3.dp,
+    /** 标记中心相对末字符底边的上移距离；列尾放不下时改为顶边的上移距离。 */
+    val offset: Dp = 2.dp,
 )
 
 sealed interface MarkdownInlineDecoration {
@@ -152,6 +165,7 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
+    val endMarkers: List<ResolvedInlineEndMarker> = emptyList(),
 )
 
 internal data class ResolvedTiqianInlineObject(
@@ -164,6 +178,11 @@ internal data class ResolvedInlineDecoration(
     val start: Int,
     val endExclusive: Int,
     val decoration: MarkdownInlineDecoration,
+)
+
+internal data class ResolvedInlineEndMarker(
+    val endExclusive: Int,
+    val marker: MarkdownInlineEndMarker,
 )
 
 internal data class ResolvedInlineBackground(
@@ -429,6 +448,7 @@ private fun buildResolvedMarkdownText(
     val base = text.buildInlineBase(nonOverlappingReplacements)
     val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
+    val endMarkers = mutableListOf<ResolvedInlineEndMarker>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
     val annotated = AnnotatedString.Builder(base).apply {
         fun addRendererOwnedInlineCode(start: Int, end: Int) {
@@ -604,6 +624,9 @@ private fun buildResolvedMarkdownText(
                     presentation.decoration?.let { decoration ->
                         decorations += ResolvedInlineDecoration(start, end, decoration)
                     }
+                    presentation.endMarker?.let { marker ->
+                        endMarkers += ResolvedInlineEndMarker(end, marker)
+                    }
                 }
             }
         }
@@ -635,6 +658,7 @@ private fun buildResolvedMarkdownText(
         backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
+        endMarkers = endMarkers,
     )
 }
 

@@ -29,6 +29,39 @@ TiqianMarkdown(
 
 文档转换、自定义样式和图片加载见[架构说明](docs/architecture.md)。
 
+## 宿主可以在 Custom 范围末尾绘制小图标
+
+宿主用 `MarkdownTextMark.Custom` 保留范围，并通过 `endMarker` 提供 Painter。下面的
+`metadata` 是该段落的现有元数据，`notePainter` 是宿主已经创建的 Painter；范围偏移采用 UTF-16 字符单元。
+
+```kotlin
+val text = MarkdownText(
+    value = "正文内容",
+    spans = listOf(
+        MarkdownTextSpan(MarkdownTextRange(0, 4), MarkdownTextMark.Custom("note")),
+    ),
+)
+TiqianMarkdown(
+    document = MarkdownRenderDocument(listOf(MarkdownParagraph(text, metadata))),
+    inlineSlots = MarkdownInlineSlots(custom = { mark, _, _ ->
+        if (mark.kind == "note") {
+            MarkdownCustomInlinePresentation(
+                endMarker = MarkdownInlineEndMarker(painter = notePainter, color = Color.Gray),
+            )
+        } else null
+    }),
+)
+```
+
+每个非空 Custom 范围只在最后一个已排版文字端点绘制一次，跨行范围不会逐行重复；相邻的独立范围
+即使 kind 和样式相同也各自保留标记。内联图片或公式改变显示文字长度时，标记使用已有映射后的末端。
+
+标记不插入文字或占位符，不预留正文宽高，不改变正文测量、断行、选择与复制。样式或标记开关改变时，
+绘制读取最近一次真实布局结果。末字右侧放不下时，标记收进列右边界并向下错开；极窄列会缩小标记框，
+Painter 的笔画裁切在该框内。宿主需留意行底附近的可用绘制空间，标记不会自动避让后续正文或其他装饰。
+
+标记按横排布局框的物理右侧放置，此能力不承诺 RTL（从右向左）或 Bidi（双向文本）的逻辑末尾方向。
+
 ## 体验与构建
 
 ```shell

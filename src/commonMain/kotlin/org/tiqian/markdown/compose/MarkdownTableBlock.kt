@@ -301,62 +301,96 @@ fun DefaultMarkdownTable(
                             ),
                     ) {
                         block.rows.forEachIndexed { rowIndex, row ->
-                            Row(Modifier.height(IntrinsicSize.Min)) {
-                                row.cells.forEachIndexed { columnIndex, cell ->
-                                    val cellModifier = Modifier
-                                        .width(cellWidths[columnIndex])
-                                        .fillMaxHeight()
-                                        .let { modifier ->
-                                            if (cell.header) {
-                                                modifier.background(style.tableHeaderBackground)
-                                            } else {
-                                                modifier
-                                            }
-                                        }
-                                        .drawWithContent {
-                                            drawContent()
-                                            if (rowIndex > 0) {
-                                                drawLine(
-                                                    color = style.tableBorderColor,
-                                                    start = Offset(0f, borderWidthPx / 2f),
-                                                    end = Offset(size.width, borderWidthPx / 2f),
-                                                    strokeWidth = borderWidthPx,
-                                                )
-                                            }
-                                            if (columnIndex > 0) {
-                                                drawLine(
-                                                    color = style.tableBorderColor,
-                                                    start = Offset(borderWidthPx / 2f, 0f),
-                                                    end = Offset(borderWidthPx / 2f, size.height),
-                                                    strokeWidth = borderWidthPx,
-                                                )
-                                            }
-                                        }
-                                        .padding(style.tableCellPadding)
-                                    val textStyle = style.tableText.copy(
-                                        fontWeight = if (cell.header) FontWeight.Medium else style.tableText.fontWeight,
-                                        textAlign = when (cell.alignment) {
-                                            MarkdownTableAlignment.Start,
-                                            MarkdownTableAlignment.Unspecified,
-                                            -> TextAlign.Start
-                                            MarkdownTableAlignment.Center -> TextAlign.Center
-                                            MarkdownTableAlignment.End -> TextAlign.End
-                                        },
+                            val revision = LocalMarkdownDocumentRevision.current
+                            val rowContent: @Composable () -> Unit = {
+                                MarkdownNodeClickScope(event = {
+                                    MarkdownNodeClickEvent(
+                                        nodeType = row.metadata.nodeType ?: "TableRow",
+                                        text = row.cells.joinToString("\t") { it.text.value },
+                                        metadata = row.metadata,
+                                        payload = mapOf("header" to row.header.toString()) + row.metadata.payload,
+                                        documentRevision = revision,
                                     )
-                                    MarkdownSelectionScope(markdownSelectionKey(cell.metadata.key, "cell")) {
-                                        MarkdownTextBlock(
-                                            text = cell.text,
-                                            textStyle = textStyle,
-                                            markdownStyle = style,
-                                            inlineSlots = inlineSlots,
-                                            onLinkClick = onLinkClick,
-                                            onFootnoteClick = onFootnoteClick,
-                                            modifier = cellModifier,
-                                            paragraphStyle = markdownTableParagraphStyle,
-                                        )
+                                }) {
+                                    Row(Modifier.height(IntrinsicSize.Min)) {
+                                        row.cells.forEachIndexed { columnIndex, cell ->
+                                            val cellModifier = Modifier
+                                                .width(cellWidths[columnIndex])
+                                                .fillMaxHeight()
+                                                .let { modifier ->
+                                                    if (cell.header) {
+                                                        modifier.background(style.tableHeaderBackground)
+                                                    } else {
+                                                        modifier
+                                                    }
+                                                }
+                                                .drawWithContent {
+                                                    drawContent()
+                                                    if (rowIndex > 0) {
+                                                        drawLine(
+                                                            color = style.tableBorderColor,
+                                                            start = Offset(0f, borderWidthPx / 2f),
+                                                            end = Offset(size.width, borderWidthPx / 2f),
+                                                            strokeWidth = borderWidthPx,
+                                                        )
+                                                    }
+                                                    if (columnIndex > 0) {
+                                                        drawLine(
+                                                            color = style.tableBorderColor,
+                                                            start = Offset(borderWidthPx / 2f, 0f),
+                                                            end = Offset(borderWidthPx / 2f, size.height),
+                                                            strokeWidth = borderWidthPx,
+                                                        )
+                                                    }
+                                                }
+                                                .padding(style.tableCellPadding)
+                                            val textStyle = style.tableText.copy(
+                                                fontWeight = if (cell.header) FontWeight.Medium else style.tableText.fontWeight,
+                                                textAlign = when (cell.alignment) {
+                                                    MarkdownTableAlignment.Start,
+                                                    MarkdownTableAlignment.Unspecified,
+                                                    -> TextAlign.Start
+                                                    MarkdownTableAlignment.Center -> TextAlign.Center
+                                                    MarkdownTableAlignment.End -> TextAlign.End
+                                                },
+                                            )
+                                            MarkdownNodeClickScope(event = {
+                                                MarkdownNodeClickEvent(
+                                                    nodeType = cell.metadata.nodeType ?: "TableCell",
+                                                    text = cell.text.value,
+                                                    metadata = cell.metadata,
+                                                    payload = mapOf("header" to cell.header.toString(), "alignment" to cell.alignment.name) + cell.metadata.payload,
+                                                    documentRevision = revision,
+                                                )
+                                            }, modifier = cellModifier) {
+                                                MarkdownSelectionScope(markdownSelectionKey(cell.metadata.key, "cell")) {
+                                                    MarkdownTextBlock(
+                                                        text = cell.text,
+                                                        textStyle = textStyle,
+                                                        markdownStyle = style,
+                                                        inlineSlots = inlineSlots,
+                                                        onLinkClick = onLinkClick,
+                                                        onFootnoteClick = onFootnoteClick,
+                                                        modifier = if (LocalMarkdownNodeClick.current?.value == null) cellModifier else Modifier,
+                                                        paragraphStyle = markdownTableParagraphStyle,
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            val section = row.sectionMetadata
+                            if (section == null) rowContent() else MarkdownNodeClickScope(event = {
+                                MarkdownNodeClickEvent(
+                                    nodeType = section.nodeType ?: if (row.header) "TableHead" else "TableBody",
+                                    text = block.rows.filter { it.sectionMetadata?.key == section.key }.joinToString("\n") {
+                                        it.cells.joinToString("\t") { cell -> cell.text.value }
+                                    },
+                                    metadata = section,
+                                    documentRevision = revision,
+                                )
+                            }, content = rowContent)
                         }
                     }
                 }

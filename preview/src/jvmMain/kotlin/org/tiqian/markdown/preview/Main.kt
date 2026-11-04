@@ -59,6 +59,7 @@ import org.tiqian.markdown.compose.MarkdownImageViewerHost
 import org.tiqian.markdown.compose.MarkdownInlineDecoration
 import org.tiqian.markdown.compose.MarkdownInlineSlots
 import org.tiqian.markdown.compose.MarkdownStyle
+import org.tiqian.markdown.compose.MarkdownNodeClickEvent
 import org.tiqian.markdown.compose.TiqianMarkdown
 import org.jetbrains.skia.EncodedImageFormat
 import java.io.File
@@ -217,6 +218,7 @@ private fun MarkdownPreviewApp() {
     var selectedIndex by remember { mutableIntStateOf(0) }
     var previewWidth by remember { mutableIntStateOf(PreviewCases.first().width) }
     var dark by remember { mutableStateOf(false) }
+    var recentNodes by remember { mutableStateOf<List<MarkdownNodeClickEvent>>(emptyList()) }
     val selected = PreviewCases[selectedIndex]
     val shellColors = if (dark) darkColorScheme() else lightColorScheme()
 
@@ -229,14 +231,25 @@ private fun MarkdownPreviewApp() {
                 onSelect = { index ->
                     selectedIndex = index
                     previewWidth = PreviewCases[index].width
+                    recentNodes = emptyList()
                 },
                 onWidthChange = { previewWidth = it },
                 onDarkChange = { dark = it },
             )
-            MarkdownViewport(
-                previewCase = selected,
-                previewWidth = previewWidth,
-            )
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                Text(
+                    text = recentNodes.takeIf { it.isNotEmpty() }?.joinToString(" → ") { "${it.nodeType} · ${it.metadata.key.path} · ${it.textRange ?: "块"}" }
+                        ?: "点击正文查看节点；链接、脚注和图片保留默认动作。",
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                )
+                MarkdownViewport(
+                    previewCase = selected,
+                    previewWidth = previewWidth,
+                    onNodeClick = { event -> recentNodes = (recentNodes + event).takeLast(6); false },
+                )
+            }
         }
     }
 }
@@ -329,6 +342,7 @@ private fun PreviewControls(
 private fun MarkdownViewport(
     previewCase: PreviewCase,
     previewWidth: Int,
+    onNodeClick: (MarkdownNodeClickEvent) -> Boolean,
 ) {
     val inlineSlots = rememberPreviewInlineSlots()
     val imageProvider = rememberPreviewImageProvider()
@@ -366,6 +380,7 @@ private fun MarkdownViewport(
                                 vertical = 28.dp,
                             ),
                         inlineSlots = inlineSlots,
+                        onNodeClick = onNodeClick,
                     )
                 }
             }

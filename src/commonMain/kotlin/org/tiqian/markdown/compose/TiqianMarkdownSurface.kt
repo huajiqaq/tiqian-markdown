@@ -57,6 +57,7 @@ fun TiqianMarkdownSurface(
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
+    onNodeClick: ((MarkdownNodeClickEvent) -> Boolean)? = null,
 ) {
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
     var viewportHeightPx by remember { mutableIntStateOf(windowHeightPx) }
@@ -115,6 +116,7 @@ fun TiqianMarkdownSurface(
                     onFootnoteClick = onFootnoteClick,
                     footnotePlacement = footnotePlacement,
                     codeHighlighter = codeHighlighter,
+                    onNodeClick = onNodeClick,
                 )
                 footer?.invoke()
             }

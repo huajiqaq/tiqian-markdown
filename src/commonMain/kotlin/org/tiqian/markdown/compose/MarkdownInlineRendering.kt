@@ -7,6 +7,7 @@ import org.tiqian.markdown.MarkdownTextRange
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.withCompositionLocal
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -109,6 +110,8 @@ data class MarkdownInlineContent(
     val layoutFragments: List<MarkdownInlineFragment> = emptyList(),
     val leadingBoundary: MarkdownInlineBoundaryAdjustment = MarkdownInlineBoundaryAdjustment.Fixed,
     val trailingBoundary: MarkdownInlineBoundaryAdjustment = MarkdownInlineBoundaryAdjustment.Fixed,
+    /** Default click on an inline object; an accepted node event suppresses it. */
+    val onClick: (() -> Unit)? = null,
     val content: @Composable (alternateText: String) -> Unit,
 ) {
     init {
@@ -152,12 +155,15 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
+    /** Source range edges in raw LayoutResult coordinates, including source-backed replacements. */
+    val sourceToRenderedOffset: (Int, Boolean) -> Int = { offset, _ -> offset },
 )
 
 internal data class ResolvedTiqianInlineObject(
     val start: Int,
     val endExclusive: Int,
     val content: MarkdownInlineContent,
+    val onNodeClick: ((runDefaultAction: Boolean) -> Boolean)? = null,
 )
 
 internal data class ResolvedInlineDecoration(
@@ -245,6 +251,7 @@ internal fun resolveMarkdownText(
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
     preparedInlineMath: Map<Int, MarkdownInlineContent> = emptyMap(),
+    nodeClicks: MarkdownTextNodeClicks? = null,
 ): ResolvedMarkdownText {
     val needsInlineSlotResolution = remember(text.spans, inlineSlots) {
         text.spans.any { span ->
@@ -257,7 +264,7 @@ internal fun resolveMarkdownText(
         }
     }
     if (!needsInlineSlotResolution) {
-        return remember(text, style, onLinkClick, onFootnoteClick) {
+        return remember(text, style, onLinkClick, onFootnoteClick, nodeClicks) {
             buildResolvedMarkdownText(
                 text = text,
                 style = style,
@@ -265,16 +272,20 @@ internal fun resolveMarkdownText(
                 customPresentations = emptyMap(),
                 onLinkClick = onLinkClick,
                 onFootnoteClick = onFootnoteClick,
-            )
+            ).withNodeClicks(text, nodeClicks)
         }
     }
 
     val replacements = mutableListOf<InlineReplacement>()
     val customPresentations = mutableListOf<CustomPresentation>()
     text.spans.forEachIndexed { index, span ->
+        val slotNodeClick = remember(nodeClicks, index) {
+            nodeClicks?.let { clicks -> { clicks.inlineHandlers[index]?.invoke() == true } }
+        }
+        val inlineNodeScope = if (nodeClicks == null) LocalMarkdownInlineNodeClick.current else slotNodeClick ?: { false }
         when (val mark = span.mark) {
             is MarkdownTextMark.InlineImage -> inlineSlots.image?.let { slot ->
-                key("image", index) { slot(mark, style, textStyle) }?.let { content ->
+                key("image", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }?.let { content ->
                     if (content.metrics == null) return@let
                     replacements += content.toInlineReplacements(
                         spanIndex = index,
@@ -288,7 +299,7 @@ internal fun resolveMarkdownText(
             is MarkdownTextMark.InlineMath -> {
                 val prepared = preparedInlineMath[index]
                 val content = prepared ?: (inlineSlots.math ?: DefaultMarkdownMathInlineSlot).let { slot ->
-                    key("math", index) { slot(mark, style, textStyle) }
+                    key("math", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }
                 }
                 content?.let {
                     if (it.metrics == null) return@let
@@ -302,7 +313,7 @@ internal fun resolveMarkdownText(
             }
 
             is MarkdownTextMark.Custom -> inlineSlots.custom?.let { slot ->
-                key("custom", index) { slot(mark, style, textStyle) }?.let { presentation ->
+                key("custom", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }?.let { presentation ->
                     customPresentations += CustomPresentation(index, presentation)
                 }
             }
@@ -320,6 +331,7 @@ internal fun resolveMarkdownText(
         presentationsByIndex,
         onLinkClick,
         onFootnoteClick,
+        nodeClicks,
     ) {
         buildResolvedMarkdownText(
             text = text,
@@ -328,7 +340,12 @@ internal fun resolveMarkdownText(
             customPresentations = presentationsByIndex,
             onLinkClick = onLinkClick,
             onFootnoteClick = onFootnoteClick,
-        )
+        ).withNodeClicks(text, nodeClicks, if (nodeClicks == null) emptyMap() else customPresentations.mapNotNull { custom ->
+            custom.presentation.accessibilityLabel?.let { label ->
+                val range = text.spans[custom.spanIndex].range
+                custom.spanIndex to label(text.value.substring(range.start, range.endExclusive))
+            }
+        }.toMap())
     }
 }
 
@@ -356,9 +373,6 @@ internal fun resolveMarkdownTextWithPreparedMath(
     )
 }
 
-private fun MarkdownInlineContent.withSourceAlternateText(sourceText: String): MarkdownInlineContent =
-    if (alternateText.isNotEmpty()) this else copy(alternateText = sourceText)
-
 private fun MarkdownInlineContent.toInlineReplacements(
     spanIndex: Int,
     sourceRange: MarkdownTextRange,
@@ -369,7 +383,7 @@ private fun MarkdownInlineContent.toInlineReplacements(
         spanIndex = spanIndex,
         range = sourceRange,
         id = idPrefix,
-        content = withSourceAlternateText(sourceText),
+        content = if (alternateText.isNotEmpty()) this else copy(alternateText = sourceText),
     )
     if (layoutFragments.size < 2) return listOf(whole)
 
@@ -454,6 +468,7 @@ private fun buildResolvedMarkdownText(
             val end = mapOffset(span.range.endExclusive, nonOverlappingReplacements, end = true).coerceIn(start, length)
             if (start == end) return@forEachIndexed
             when (val mark = span.mark) {
+                null -> Unit
                 MarkdownTextMark.Strong -> addStyle(SpanStyle(fontWeight = FontWeight.Bold), start, end)
                 MarkdownTextMark.Emphasis -> addStyle(SpanStyle(fontStyle = FontStyle.Italic), start, end)
                 MarkdownTextMark.Strikethrough -> addStyle(
@@ -635,6 +650,7 @@ private fun buildResolvedMarkdownText(
         backgrounds = backgrounds,
         decorations = decorations,
         interactions = interactions,
+        sourceToRenderedOffset = { offset, end -> mapOffset(offset, nonOverlappingReplacements, end) },
     )
 }
 
@@ -686,26 +702,6 @@ private fun mapOffset(
         delta += outputLength - (replacement.range.endExclusive - replacement.range.start)
     }
     return originalOffset + delta
-}
-
-/**
- * Compose does not expose its underline metric. On the capability fallback path, custom dashed
- * underlines therefore become native solid underlines instead of maintaining a second guessed
- * `lineBottom - offset` geometry. The normal Tiqian path retains the requested dashed stroke.
- */
-internal fun ResolvedMarkdownText.composeFallbackAnnotatedString(): AnnotatedString {
-    if (decorations.isEmpty()) return annotated
-    return AnnotatedString.Builder(annotated).apply {
-        decorations.forEach { resolved ->
-            if (resolved.decoration is MarkdownInlineDecoration.DashedUnderline) {
-                addStyle(
-                    SpanStyle(textDecoration = TextDecoration.Underline),
-                    resolved.start,
-                    resolved.endExclusive,
-                )
-            }
-        }
-    }.toAnnotatedString()
 }
 
 internal fun Modifier.markdownInlineInteractionSemantics(

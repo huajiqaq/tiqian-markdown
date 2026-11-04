@@ -30,7 +30,3 @@ class MarkdownImageContent(
 typealias MarkdownImageProvider = @Composable (MarkdownImageBlock) -> MarkdownImageContent
 
 internal val LocalMarkdownImageProvider = staticCompositionLocalOf<MarkdownImageProvider?> { null }
-
-@Composable
-internal fun markdownImageContent(block: MarkdownImageBlock): MarkdownImageContent? =
-    LocalMarkdownImageProvider.current?.invoke(block)

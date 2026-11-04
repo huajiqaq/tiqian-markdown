@@ -121,9 +121,10 @@ fun DefaultMarkdownImageBlock(
     inlineSlots: MarkdownInlineSlots = DefaultMarkdownInlineSlots,
 ) {
     val label = block.description.ifBlank { block.destination }
-    val imageContent = markdownImageContent(block)
-    val viewerState = currentMarkdownImageViewerState()
-    val imageGallery = currentMarkdownImageGallery()
+    val imageContent = LocalMarkdownImageProvider.current?.invoke(block)
+    val viewerState = LocalMarkdownImageViewerState.current
+    val imageGallery = LocalMarkdownImageGallery.current
+    val nodeClick = rememberMarkdownNodeClickHandler()
     Column(Modifier.fillMaxWidth()) {
         if (imageContent == null || imageContent.loadState == MarkdownImageLoadState.Error) {
             val fallbackImageText = @Composable {
@@ -185,7 +186,7 @@ fun DefaultMarkdownImageBlock(
                     .then(if (ratio != null && ratio > 0f) Modifier.aspectRatio(ratio) else Modifier)
                     .border(style.imageOutlineWidth, style.imageOutlineColor, imageShape)
                     .clip(imageShape)
-                    .openMarkdownImageOnClick(viewerState, block, imageGallery)
+                    .openMarkdownImageOnClick(viewerState, block, imageGallery, nodeClick)
                 Column(
                     modifier = Modifier.width(captionWidth),
                     horizontalAlignment = Alignment.CenterHorizontally,

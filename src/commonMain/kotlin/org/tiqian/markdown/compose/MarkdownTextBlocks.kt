@@ -6,6 +6,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -78,6 +82,7 @@ internal fun MarkdownTextBlock(
             }
         }
     }
+    val nodeClicks = rememberMarkdownTextNodeClicks()
     val resolved = resolveMarkdownText(
         text = text,
         style = markdownStyle,
@@ -86,6 +91,7 @@ internal fun MarkdownTextBlock(
         onLinkClick = stableLinkClick,
         onFootnoteClick = handleFootnoteClick,
         preparedInlineMath = precomputed?.preparedInlineMath.orEmpty(),
+        nodeClicks = nodeClicks,
     )
     val density = LocalDensity.current
     val tiqianInlineObjects = remember(resolved.tiqianInlineObjects, density) {
@@ -97,7 +103,13 @@ internal fun MarkdownTextBlock(
     val inlineBackgrounds = remember(resolved.backgrounds) {
         resolved.backgrounds.toCjkInlineBackgrounds()
     }
-    val textModifier = modifier.markdownInlineInteractionSemantics(resolved.interactions)
+    nodeClicks?.sourceToRenderedOffset = resolved.sourceToRenderedOffset
+    val textModifier = modifier
+        .then(if (nodeClicks == null) Modifier else Modifier.onGloballyPositioned { nodeClicks.coordinates = it })
+        .markdownInlineInteractionSemantics(resolved.interactions)
+    val onTextLayout: (org.tiqian.core.LayoutResult) -> Unit = remember(nodeClicks) {
+        { layout -> nodeClicks?.layout = layout }
+    }
     val effectiveParagraph = if (markdownStyle.insetProse) insetProseParagraphStyle(paragraphStyle ?: ParagraphStyle(firstLineIndent = org.tiqian.core.Ic.Zero)) else paragraphStyle
     if (effectiveParagraph == null) {
         CjkText(
@@ -109,6 +121,7 @@ internal fun MarkdownTextBlock(
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
             precomputedLayout = precomputed?.layout,
+            onTextLayout = onTextLayout,
         )
     } else {
         CjkText(
@@ -121,6 +134,7 @@ internal fun MarkdownTextBlock(
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
             precomputedLayout = precomputed?.layout,
+            onTextLayout = onTextLayout,
         )
     }
 }
@@ -185,7 +199,18 @@ internal fun ResolvedMarkdownText.toCjkInlineObjects(
                     preventsLineBreak = resolvedObject.content.trailingBoundary.preventsLineBreak,
                 ),
                 content = {
-                    resolvedObject.content.content(resolvedObject.content.alternateText)
+                    val nodeClick = resolvedObject.onNodeClick
+                    val defaultClick = resolvedObject.content.onClick
+                    val objectContent: @Composable () -> Unit = {
+                        resolvedObject.content.content(resolvedObject.content.alternateText)
+                    }
+                    if (nodeClick == null && defaultClick == null) objectContent() else {
+                        Box(Modifier.fillMaxSize().clickable(interactionSource = null, indication = null) {
+                            if (nodeClick?.invoke(true) != true) defaultClick?.invoke()
+                        }) {
+                            CompositionLocalProvider(LocalMarkdownInlineNodeClick provides nodeClick?.let { click -> { click(false) } }, content = objectContent)
+                        }
+                    }
                 },
     )
 }

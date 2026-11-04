@@ -34,6 +34,26 @@ placement instead of delegating vertical alignment to a Compose placeholder. Hos
 and inline semantics are identified by pure-data `MarkdownCustomBlock` and `MarkdownTextMark.Custom`
 values; parser nodes and Compose content stay in the host adapter.
 
+`onNodeClick` receives every rendered block and inline family without a fixed interactive-mark
+allow-list. Adapters retain each inline node as a `MarkdownTextSpan`, with an optional visual mark
+and its own metadata. The event includes its authored type, attributes, payload and source identity;
+unknown source coordinates are explicitly marked by `hasSourceSpan = false`. Event UTF-16 ranges
+refer to the containing plain text; inline-object projections are used only to resolve geometry. Zero-length
+or non-rendered syntax does not acquire a hidden click target.
+
+Node handlers return whether they handled the event. Inline overlaps are offered inside-out, then
+block ancestors, then the existing default action. Disjoint `LinkAnnotation.Clickable` ranges reuse
+Tiqian hit testing; original URL and footnote annotations still preserve their breaking and styles.
+Native child controls consume their own input. A slot with a node-specific default action can call
+`rememberMarkdownNodeClickHandler()` before that action; an inline object's optional `onClick` is its
+default action. Long presses continue through the normal text-selection or image-provider path.
+Callbacks update through Compose state without rebuilding the document or measurement session.
+
+These extension points do not introduce parsing. Hosts construct Custom block/inline values or use
+metadata-only spans for their own syntax. The public sealed model does not accept arbitrary external
+subclasses; Custom blocks do not expose child blocks, and Custom inline presentations do not contain
+arbitrary Compose content.
+
 Colour selection has two named modes without changing any layout geometry. `MarkdownPalette.Default`
 uses Tiqian's stable built-in colours. `MarkdownPalette.Platform` maps the current Material 3 colour
 scheme and base typography into `MarkdownStyle` while retaining Tiqian's body size, line height,

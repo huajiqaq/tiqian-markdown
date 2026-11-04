@@ -863,6 +863,7 @@ private fun MarkdownBlockItem(
                         onLinkClick = onLinkClick,
                         onFootnoteClick = onFootnoteClick,
                         footnoteMarkerWidth = footnoteMarkerWidth,
+                        stackVertically = false,
                     )
                 }
             }

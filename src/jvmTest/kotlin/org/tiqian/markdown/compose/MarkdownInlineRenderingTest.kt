@@ -5,7 +5,6 @@ import org.tiqian.markdown.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -20,12 +19,10 @@ import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
-import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -548,42 +545,6 @@ class MarkdownInlineRenderingTest {
                 }
             scene.tap(Offset((highlightBox.left + highlightBox.right) / 2f, (highlightBox.top + highlightBox.bottom) / 2f))
             assertEquals(1, clicks)
-        }
-    }
-
-    @Test
-    fun composeFallbackUsesNativeUnderlineAndKeepsInteraction() {
-        var clicks = 0
-        var layoutResult: TextLayoutResult? = null
-        var capturedFallbackText: androidx.compose.ui.text.AnnotatedString? = null
-
-        ImageComposeScene(width = 240, height = 72) {
-            val resolved = resolveSegmentHighlight(onClick = { clicks++ })
-            val fallbackText = resolved.composeFallbackAnnotatedString()
-            capturedFallbackText = fallbackText
-            Box(Modifier.fillMaxSize().background(Color.White)) {
-                BasicText(
-                    text = fallbackText,
-                    modifier = Modifier.markdownInlineInteractionSemantics(resolved.interactions),
-                    style = TextStyle(color = Color.Black, fontSize = 24.sp, lineHeight = 36.sp),
-                    onTextLayout = { layoutResult = it },
-                )
-            }
-        }.use { scene ->
-            scene.render(0L)
-            val layout = assertNotNull(layoutResult)
-            val box = layout.getBoundingBox(1)
-
-            assertTrue(
-                assertNotNull(capturedFallbackText).spanStyles.any {
-                    it.start == 1 && it.end == 3 && it.item.textDecoration == TextDecoration.Underline
-                },
-                "Compose fallback must use its native underline metric",
-            )
-            scene.tap(box.center)
-            assertEquals(1, clicks)
-            scene.tap(Offset(220f, box.center.y))
-            assertEquals(1, clicks, "empty trailing space must not activate the final highlighted range")
         }
     }
 

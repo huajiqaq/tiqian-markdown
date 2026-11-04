@@ -18,6 +18,7 @@ import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextRange
 import org.tiqian.markdown.MarkdownTextSpan
+import androidx.compose.ui.layout.onGloballyPositioned
 import org.tiqian.markdown.MarkdownThematicBreak
 import org.tiqian.markdown.MarkdownUnsupportedBlock
 import org.tiqian.markdown.resolveMarkdownCodeLanguage
@@ -56,6 +57,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -174,6 +176,7 @@ internal fun MarkdownBlocks(
                                 onLinkClick = onLinkClick,
                                 onFootnoteClick = onFootnoteClick,
                                 footnoteMarkerWidth = footnoteMarkerWidths[index],
+                                stackVertically = false,
                             )
                         }
                     }
@@ -270,95 +273,99 @@ internal fun MarkdownBlock(
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
     footnoteMarkerWidth: Dp? = null,
+    stackVertically: Boolean = true,
 ) {
-    when (block) {
-        is MarkdownParagraph -> MarkdownSelectionScope(markdownSelectionKey(block.metadata.key)) {
-            MarkdownTextBlock(
-                block.text,
-                style.body,
-                style,
-                inlineSlots,
-                onLinkClick,
-                onFootnoteClick,
-            )
-        }
-        is MarkdownHeading -> MarkdownSelectionScope(markdownSelectionKey(block.metadata.key)) {
-            MarkdownTextBlock(
-                block.text,
-                style.heading(block.level),
-                style,
-                inlineSlots,
-                onLinkClick,
-                onFootnoteClick,
-            )
-        }
-        is MarkdownBlockQuote -> {
-            val quoteStyle = remember(style) { style.quoteContentStyle() }
-            val barWidth = style.quoteBarWidth
-            val barColor = style.quoteBarColor
-            // The bar is decoration drawn at the row's final height instead of an
-            // IntrinsicSize.Min sibling: intrinsic measurement is forbidden over
-            // subcompose-backed content (display math, tables), which quotes may contain.
-            Row(
-                Modifier.fillMaxWidth().drawBehind {
-                    val bar = proseQuoteBar((barWidth + style.quoteContentPadding).toPx(), 0f, size.height,
-                        barWidth.toPx(), style.quoteContentPadding.toPx())
-                    val x = if (layoutDirection == LayoutDirection.Rtl) size.width - bar.left - bar.width else bar.left
-                    drawRect(
-                        color = barColor,
-                        topLeft = Offset(x, bar.top),
-                        size = Size(bar.width, bar.height),
-                    )
-                },
-            ) {
-                ProseInsetLayout(
-                    with(LocalDensity.current) { (barWidth + style.quoteContentPadding).toPx() },
-                    Modifier.weight(1f),
+    val revision = LocalMarkdownDocumentRevision.current
+    MarkdownNodeClickScope(event = { block.nodeClickEvent(revision) }, stackVertically = stackVertically) {
+        when (block) {
+            is MarkdownParagraph -> MarkdownSelectionScope(markdownSelectionKey(block.metadata.key)) {
+                MarkdownTextBlock(
+                    block.text,
+                    style.body,
+                    style,
+                    inlineSlots,
+                    onLinkClick,
+                    onFootnoteClick,
+                )
+            }
+            is MarkdownHeading -> MarkdownSelectionScope(markdownSelectionKey(block.metadata.key)) {
+                MarkdownTextBlock(
+                    block.text,
+                    style.heading(block.level),
+                    style,
+                    inlineSlots,
+                    onLinkClick,
+                    onFootnoteClick,
+                )
+            }
+            is MarkdownBlockQuote -> {
+                val quoteStyle = remember(style) { style.quoteContentStyle() }
+                val barWidth = style.quoteBarWidth
+                val barColor = style.quoteBarColor
+                // The bar is decoration drawn at the row's final height instead of an
+                // IntrinsicSize.Min sibling: intrinsic measurement is forbidden over
+                // subcompose-backed content (display math, tables), which quotes may contain.
+                Row(
+                    Modifier.fillMaxWidth().drawBehind {
+                        val bar = proseQuoteBar((barWidth + style.quoteContentPadding).toPx(), 0f, size.height,
+                            barWidth.toPx(), style.quoteContentPadding.toPx())
+                        val x = if (layoutDirection == LayoutDirection.Rtl) size.width - bar.left - bar.width else bar.left
+                        drawRect(
+                            color = barColor,
+                            topLeft = Offset(x, bar.top),
+                            size = Size(bar.width, bar.height),
+                        )
+                    },
                 ) {
-                    MarkdownBlocks(
-                        blocks = block.blocks,
-                        modifier = Modifier.fillMaxWidth(),
-                        style = quoteStyle,
-                        slots = slots,
-                        inlineSlots = inlineSlots,
-                        onLinkClick = onLinkClick,
-                        onFootnoteClick = onFootnoteClick,
-                        compact = true,
-                    )
+                    ProseInsetLayout(
+                        with(LocalDensity.current) { (barWidth + style.quoteContentPadding).toPx() },
+                        Modifier.weight(1f),
+                    ) {
+                        MarkdownBlocks(
+                            blocks = block.blocks,
+                            modifier = Modifier.fillMaxWidth(),
+                            style = quoteStyle,
+                            slots = slots,
+                            inlineSlots = inlineSlots,
+                            onLinkClick = onLinkClick,
+                            onFootnoteClick = onFootnoteClick,
+                            compact = true,
+                        )
+                    }
                 }
             }
-        }
 
-        is MarkdownList -> MarkdownListBlock(
-            block,
-            style,
-            slots,
-            inlineSlots,
-            onLinkClick,
-            onFootnoteClick,
-        )
-        is MarkdownCodeBlock -> slots.codeBlock?.invoke(block, style) ?: DefaultMarkdownCodeBlock(block, style)
-        is MarkdownImageBlock -> slots.imageBlock?.invoke(block, style)
-            ?: DefaultMarkdownImageBlock(block, style, onLinkClick, inlineSlots)
-        is MarkdownMathBlock -> slots.mathBlock?.invoke(block, style) ?: DefaultMarkdownMathBlock(block, style)
-        is MarkdownHtmlBlock -> slots.htmlBlock?.invoke(block, style) ?: DefaultMarkdownHtmlBlock(block, style)
-        is MarkdownTable -> slots.table?.invoke(block, style)
-            ?: DefaultMarkdownTable(block, style, onLinkClick, onFootnoteClick, inlineSlots)
-        is MarkdownFootnoteDefinition -> slots.footnoteDefinition?.invoke(block, style)
-            ?: DefaultMarkdownFootnoteDefinition(
+            is MarkdownList -> MarkdownListBlock(
                 block,
                 style,
                 slots,
+                inlineSlots,
                 onLinkClick,
                 onFootnoteClick,
-                inlineSlots,
-                footnoteMarkerWidth,
             )
-        is MarkdownCustomBlock -> slots.customBlock?.invoke(block, style)
-            ?: DefaultMarkdownCustomBlock(block, style)
-        is MarkdownThematicBreak -> slots.thematicBreak?.invoke(block, style) ?: DefaultMarkdownThematicBreak(style)
-        is MarkdownUnsupportedBlock -> slots.unsupportedBlock?.invoke(block, style)
-            ?: DefaultMarkdownUnsupportedBlock(block, style)
+            is MarkdownCodeBlock -> slots.codeBlock?.invoke(block, style) ?: DefaultMarkdownCodeBlock(block, style)
+            is MarkdownImageBlock -> slots.imageBlock?.invoke(block, style)
+                ?: DefaultMarkdownImageBlock(block, style, onLinkClick, inlineSlots)
+            is MarkdownMathBlock -> slots.mathBlock?.invoke(block, style) ?: DefaultMarkdownMathBlock(block, style)
+            is MarkdownHtmlBlock -> slots.htmlBlock?.invoke(block, style) ?: DefaultMarkdownHtmlBlock(block, style)
+            is MarkdownTable -> slots.table?.invoke(block, style)
+                ?: DefaultMarkdownTable(block, style, onLinkClick, onFootnoteClick, inlineSlots)
+            is MarkdownFootnoteDefinition -> slots.footnoteDefinition?.invoke(block, style)
+                ?: DefaultMarkdownFootnoteDefinition(
+                    block,
+                    style,
+                    slots,
+                    onLinkClick,
+                    onFootnoteClick,
+                    inlineSlots,
+                    footnoteMarkerWidth,
+                )
+            is MarkdownCustomBlock -> slots.customBlock?.invoke(block, style)
+                ?: DefaultMarkdownCustomBlock(block, style)
+            is MarkdownThematicBreak -> slots.thematicBreak?.invoke(block, style) ?: DefaultMarkdownThematicBreak(style)
+            is MarkdownUnsupportedBlock -> slots.unsupportedBlock?.invoke(block, style)
+                ?: DefaultMarkdownUnsupportedBlock(block, style)
+        }
     }
 }
 
@@ -458,58 +465,69 @@ private fun MarkdownListBlock(
                     val itemSpacing = if (block.tight) tightItemSpacing else looseItemSpacing
                     if (itemSpacing > 0.dp) Spacer(Modifier.height(itemSpacing))
                 }
-                WholeCellContentMarkerRow(
-                    minimumMarkerRegionWidth = minimumMarkerRegionWidth,
-                    contentCellWidthPx = coreMarkerTextStyle.fontSize,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { markerModifier, contentModifier ->
-                    val marker = markers[index]
-                    val ordinalMarker = (block.ordered || style.listMarkerAlignment != null) && marker is MarkdownListMarker.Text
-                    when (marker) {
-                        is MarkdownListMarker.Text -> if (ordinalMarker) {
-                            MarkdownSelectionScope(markdownSelectionKey(item.metadata.key, "marker")) {
-                                CjkText(
-                                    text = marker.value,
-                                    modifier = markerModifier,
-                                    style = style.body,
-                                    paragraphStyle = style.listMarkerAlignment?.let(::proseMarkerParagraphStyle) ?: markerEndParagraphStyle,
-                                    measurer = markerMeasurer,
-                                )
-                            }
-                        } else {
-                            Row(markerModifier) {
-                                Spacer(Modifier.width(markerLeadingSpace))
+                val revision = LocalMarkdownDocumentRevision.current
+                MarkdownNodeClickScope(event = {
+                    MarkdownNodeClickEvent(
+                        nodeType = item.metadata.nodeType ?: "ListItem",
+                        text = item.blocks.joinToString("\n") { it.readableText() },
+                        metadata = item.metadata,
+                        payload = listOfNotNull(item.task?.let { "task" to it.name }).toMap() + item.metadata.payload,
+                        documentRevision = revision,
+                    )
+                }) {
+                    WholeCellContentMarkerRow(
+                        minimumMarkerRegionWidth = minimumMarkerRegionWidth,
+                        contentCellWidthPx = coreMarkerTextStyle.fontSize,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { markerModifier, contentModifier ->
+                        val marker = markers[index]
+                        val ordinalMarker = (block.ordered || style.listMarkerAlignment != null) && marker is MarkdownListMarker.Text
+                        when (marker) {
+                            is MarkdownListMarker.Text -> if (ordinalMarker) {
                                 MarkdownSelectionScope(markdownSelectionKey(item.metadata.key, "marker")) {
                                     CjkText(
                                         text = marker.value,
-                                        modifier = Modifier.width(markerWidth),
+                                        modifier = markerModifier,
                                         style = style.body,
-                                        paragraphStyle = markerStartParagraphStyle,
+                                        paragraphStyle = style.listMarkerAlignment?.let(::proseMarkerParagraphStyle) ?: markerEndParagraphStyle,
                                         measurer = markerMeasurer,
                                     )
                                 }
+                            } else {
+                                Row(markerModifier) {
+                                    Spacer(Modifier.width(markerLeadingSpace))
+                                    MarkdownSelectionScope(markdownSelectionKey(item.metadata.key, "marker")) {
+                                        CjkText(
+                                            text = marker.value,
+                                            modifier = Modifier.width(markerWidth),
+                                            style = style.body,
+                                            paragraphStyle = markerStartParagraphStyle,
+                                            measurer = markerMeasurer,
+                                        )
+                                    }
+                                }
+                            }
+                            is MarkdownListMarker.Task -> Row(markerModifier) {
+                                Spacer(Modifier.width(markerLeadingSpace))
+                                MarkdownTaskListMarker(
+                                    checked = marker.checked,
+                                    modifier = Modifier.width(markerWidth),
+                                    referenceLayout = markerReferenceLayout,
+                                    fontSize = coreMarkerTextStyle.fontSize,
+                                )
                             }
                         }
-                        is MarkdownListMarker.Task -> Row(markerModifier) {
-                            Spacer(Modifier.width(markerLeadingSpace))
-                            MarkdownTaskListMarker(
-                                checked = marker.checked,
-                                modifier = Modifier.width(markerWidth),
-                                referenceLayout = markerReferenceLayout,
-                                fontSize = coreMarkerTextStyle.fontSize,
-                            )
-                        }
+                        MarkdownBlocks(
+                            blocks = item.blocks,
+                            modifier = contentModifier,
+                            style = style.copy(insetProse = true),
+                            slots = slots,
+                            inlineSlots = inlineSlots,
+                            onLinkClick = onLinkClick,
+                            onFootnoteClick = onFootnoteClick,
+                            compact = block.tight,
+                        )
                     }
-                    MarkdownBlocks(
-                        blocks = item.blocks,
-                        modifier = contentModifier,
-                        style = style.copy(insetProse = true),
-                        slots = slots,
-                        inlineSlots = inlineSlots,
-                        onLinkClick = onLinkClick,
-                        onFootnoteClick = onFootnoteClick,
-                        compact = block.tight,
-                    )
                 }
             }
         }
@@ -655,6 +673,22 @@ fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
             }
         }
     }
+    val nodeClicks = rememberMarkdownTextNodeClicks()
+    val resolvedCode = remember(block, highlights, highlightedCode, nodeClicks) {
+        val tokenText = MarkdownText(block.code, if (nodeClicks == null) emptyList() else highlights.mapIndexedNotNull { index, token ->
+            val start = token.range.start.coerceIn(0, block.code.length)
+            val end = token.range.endExclusive.coerceIn(start, block.code.length)
+            if (start == end) return@mapIndexedNotNull null
+            MarkdownTextSpan(
+                range = MarkdownTextRange(start, end),
+                metadata = (token.metadata ?: generatedMarkdownNodeMetadata(block.metadata, index)).let { metadata ->
+                    metadata.copy(nodeType = metadata.nodeType ?: "CodeToken", payload = mapOf("kind" to token.kind.name) + metadata.payload)
+                },
+            )
+        })
+        ResolvedMarkdownText(highlightedCode, emptyMap(), emptyList(), emptyList(), emptyList(), emptyList(),
+            { offset, _ -> offset }).withNodeClicks(tokenText, nodeClicks)
+    }
     val lineCount = remember(block.code) { block.code.count { it == '\n' } + 1 }
     val lineNumbers = remember(lineCount) { (1..lineCount).joinToString("\n") }
     val language = codeLanguage?.displayLabel
@@ -763,7 +797,13 @@ fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
                 )
                 Spacer(Modifier.width(style.codeColumnSpacing))
             }
-            BasicText(text = highlightedCode, style = style.codeBlock)
+            BasicText(
+                text = resolvedCode.annotated,
+                style = style.codeBlock,
+                modifier = (if (nodeClicks == null) Modifier else Modifier.onGloballyPositioned { nodeClicks.coordinates = it })
+                    .markdownInlineInteractionSemantics(resolvedCode.interactions),
+                onTextLayout = { nodeClicks?.composeLayout = it },
+            )
         }
     }
 }

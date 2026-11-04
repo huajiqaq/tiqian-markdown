@@ -87,7 +87,7 @@ internal class MarkdownImageViewerSession(
 fun rememberMarkdownImageViewerState(): MarkdownImageViewerState =
     remember { MarkdownImageViewerState() }
 
-private val LocalMarkdownImageViewerState = staticCompositionLocalOf<MarkdownImageViewerState?> { null }
+internal val LocalMarkdownImageViewerState = staticCompositionLocalOf<MarkdownImageViewerState?> { null }
 internal val LocalMarkdownImageGallery = staticCompositionLocalOf<List<MarkdownImageBlock>> { emptyList() }
 
 /**
@@ -200,16 +200,11 @@ internal fun Modifier.openMarkdownImageOnClick(
     state: MarkdownImageViewerState?,
     block: MarkdownImageBlock,
     gallery: List<MarkdownImageBlock>,
-): Modifier = if (state == null) {
+    onNodeClick: (() -> Boolean)? = null,
+): Modifier = if (state == null && onNodeClick == null) {
     this
 } else {
-    markdownClickablePointer().clickable(role = Role.Image) { state.show(block, gallery) }
+    markdownClickablePointer().clickable(role = Role.Image) {
+        if (onNodeClick?.invoke() != true) state?.show(block, gallery)
+    }
 }
-
-@Composable
-internal fun currentMarkdownImageViewerState(): MarkdownImageViewerState? =
-    LocalMarkdownImageViewerState.current
-
-@Composable
-internal fun currentMarkdownImageGallery(): List<MarkdownImageBlock> =
-    LocalMarkdownImageGallery.current

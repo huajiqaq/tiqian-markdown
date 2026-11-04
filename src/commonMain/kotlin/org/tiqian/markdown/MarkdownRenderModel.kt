@@ -4,6 +4,8 @@ package org.tiqian.markdown
 data class MarkdownRenderDocument(
     val blocks: List<MarkdownBlock>,
     val issues: List<MarkdownCapabilityIssue> = emptyList(),
+    val metadata: MarkdownNodeMetadata? = null,
+    val revision: Long? = null,
 )
 
 data class MarkdownNodeKey(
@@ -25,6 +27,13 @@ data class MarkdownNodeMetadata(
     val sourceSpan: MarkdownSourceSpan,
     /** Exact Markdown covered by this node when the compiler was given the source text. */
     val sourceMarkdown: String? = null,
+    /** Original parser type, attributes and semantic data; visual marks remain independent. */
+    val nodeType: String? = null,
+    val attributes: Map<String, String> = emptyMap(),
+    val payload: Map<String, String> = emptyMap(),
+    val persistentId: Long? = null,
+    /** False when the adapter has no exact source position, including generated display nodes. */
+    val hasSourceSpan: Boolean = true,
 )
 
 sealed interface MarkdownBlock {
@@ -82,6 +91,7 @@ data class MarkdownCodeBlock(
 data class MarkdownCodeHighlight(
     val range: MarkdownTextRange,
     val kind: MarkdownCodeHighlightKind,
+    val metadata: MarkdownNodeMetadata? = null,
 )
 
 enum class MarkdownCodeHighlightKind {
@@ -147,6 +157,8 @@ data class MarkdownTableRow(
     val cells: List<MarkdownTableCell>,
     val header: Boolean,
     val metadata: MarkdownNodeMetadata,
+    /** Optional table head/body identity, retained while rows stay in display order. */
+    val sectionMetadata: MarkdownNodeMetadata? = null,
 )
 
 data class MarkdownTableCell(
@@ -198,7 +210,9 @@ data class MarkdownTextRange(
 
 data class MarkdownTextSpan(
     val range: MarkdownTextRange,
-    val mark: MarkdownTextMark,
+    /** Null retains an ordinary or unsupported node without inventing a visual mark. */
+    val mark: MarkdownTextMark? = null,
+    val metadata: MarkdownNodeMetadata? = null,
 )
 
 sealed interface MarkdownTextMark {

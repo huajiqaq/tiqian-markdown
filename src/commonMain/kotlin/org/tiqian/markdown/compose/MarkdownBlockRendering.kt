@@ -1,6 +1,12 @@
 package org.tiqian.markdown.compose
 
 import org.tiqian.markdown.MarkdownBlock
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownContainerKind
+import org.tiqian.markdown.MarkdownBibliographyBlock
+import org.tiqian.markdown.MarkdownTocBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
 import org.tiqian.markdown.MarkdownBlockQuote
 import org.tiqian.markdown.MarkdownCodeBlock
 import org.tiqian.markdown.MarkdownCustomBlock
@@ -296,6 +302,7 @@ internal fun MarkdownBlock(
                     inlineSlots,
                     onLinkClick,
                     onFootnoteClick,
+                    modifier = Modifier.markdownHeadingTarget(block),
                 )
             }
             is MarkdownBlockQuote -> {
@@ -360,8 +367,27 @@ internal fun MarkdownBlock(
                     inlineSlots,
                     footnoteMarkerWidth,
                 )
-            is MarkdownCustomBlock -> slots.customBlock?.invoke(block, style)
-                ?: DefaultMarkdownCustomBlock(block, style)
+            is MarkdownCustomBlock -> {
+                slots.customBlock?.invoke(block, style) ?: DefaultMarkdownCustomBlock(block, style)
+                if (block.blocks.isNotEmpty()) MarkdownBlocks(block.blocks, modifier = Modifier.fillMaxWidth(), style = style, slots = slots, inlineSlots = inlineSlots,
+                    onLinkClick = onLinkClick, onFootnoteClick = onFootnoteClick, compact = false)
+            }
+            is MarkdownContainerBlock -> {
+                val defaultContent: @Composable () -> Unit = {
+                    DefaultMarkdownContainerBlock(block, style, slots, inlineSlots, onLinkClick, onFootnoteClick)
+                }
+                slots.container?.invoke(block, style, defaultContent) ?: defaultContent()
+            }
+            is MarkdownBibliographyBlock -> {
+                val content: @Composable () -> Unit = { DefaultMarkdownBibliographyBlock(block, style, inlineSlots, onLinkClick, onFootnoteClick) }
+                slots.bibliography?.invoke(block, style, content) ?: content()
+            }
+            is MarkdownTocBlock -> {
+                val content: @Composable () -> Unit = { DefaultMarkdownTocBlock(block, style, inlineSlots, onLinkClick, onFootnoteClick) }
+                slots.tableOfContents?.invoke(block, style, content) ?: content()
+            }
+            is MarkdownDiagramBlock -> slots.diagram?.invoke(block, style) ?: DefaultMarkdownDiagramBlock(block, style)
+            is MarkdownPageBreakBlock -> slots.pageBreak?.invoke(block, style) ?: DefaultMarkdownThematicBreak(style)
             is MarkdownThematicBreak -> slots.thematicBreak?.invoke(block, style) ?: DefaultMarkdownThematicBreak(style)
             is MarkdownUnsupportedBlock -> slots.unsupportedBlock?.invoke(block, style)
                 ?: DefaultMarkdownUnsupportedBlock(block, style)
@@ -663,9 +689,16 @@ fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
             codeHighlighter.highlight(block.code, codeLanguage?.tokenizerLabel)
         }
     }
-    val highlightedCode = remember(block.code, highlights, style.codeHighlight) {
+    val highlightedCode = remember(block.code, highlights, style.codeHighlight, block.highlightedLines, style.highlight.background) {
         buildAnnotatedString {
             append(block.code)
+            var start = 0
+            block.code.split('\n').forEachIndexed { index, line ->
+                if (block.highlightedLines.any { index + 1 in it } && line.isNotEmpty()) {
+                    addStyle(androidx.compose.ui.text.SpanStyle(background = style.highlight.background), start, start + line.length)
+                }
+                start += line.length + 1
+            }
             highlights.forEach { highlight ->
                 val start = highlight.range.start.coerceIn(0, block.code.length)
                 val end = highlight.range.endExclusive.coerceIn(start, block.code.length)
@@ -690,7 +723,7 @@ fun DefaultMarkdownCodeBlock(block: MarkdownCodeBlock, style: MarkdownStyle) {
             { offset, _ -> offset }).withNodeClicks(tokenText, nodeClicks)
     }
     val lineCount = remember(block.code) { block.code.count { it == '\n' } + 1 }
-    val lineNumbers = remember(lineCount) { (1..lineCount).joinToString("\n") }
+    val lineNumbers = remember(lineCount, block.startLineNumber) { (0 until lineCount).joinToString("\n") { (block.startLineNumber + it).toString() } }
     val language = codeLanguage?.displayLabel
     val fileName = block.fileName?.takeIf { it.isNotBlank() }
     @Suppress("DEPRECATION")
@@ -943,7 +976,10 @@ fun DefaultMarkdownFigureCaption(
 
 @Composable
 fun DefaultMarkdownCustomBlock(block: MarkdownCustomBlock, style: MarkdownStyle) {
-    BasicText(text = block.metadata.sourceMarkdown.orEmpty(), style = style.body)
+    val text = block.attributes["text"].orEmpty().ifEmpty { if (block.blocks.isEmpty()) block.metadata.sourceMarkdown.orEmpty() else "" }
+    if (text.isNotEmpty()) MarkdownSelectionScope(markdownSelectionKey(block.metadata.key, "custom")) {
+        BasicText(text = text, style = style.body)
+    }
 }
 
 @Composable

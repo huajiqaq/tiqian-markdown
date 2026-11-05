@@ -106,7 +106,7 @@ internal fun MarkdownTextBlock(
     nodeClicks?.sourceToRenderedOffset = resolved.sourceToRenderedOffset
     val textModifier = modifier
         .then(if (nodeClicks == null) Modifier else Modifier.onGloballyPositioned { nodeClicks.coordinates = it })
-        .markdownInlineInteractionSemantics(resolved.interactions)
+        .markdownInlineInteractionSemantics(resolved.interactions, resolved.semanticsText)
     val onTextLayout: (org.tiqian.core.LayoutResult) -> Unit = remember(nodeClicks) {
         { layout -> nodeClicks?.layout = layout }
     }

@@ -20,6 +20,12 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import org.tiqian.core.LayoutResult
 import org.tiqian.core.getBoundingBoxes
 import org.tiqian.markdown.MarkdownBlock
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownBibliographyBlock
+import org.tiqian.markdown.MarkdownTocBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
+import org.tiqian.markdown.MarkdownNodeValue
 import org.tiqian.markdown.MarkdownBlockQuote
 import org.tiqian.markdown.MarkdownCodeBlock
 import org.tiqian.markdown.MarkdownCustomBlock
@@ -55,6 +61,8 @@ data class MarkdownNodeClickEvent(
     val block: MarkdownBlock? = null,
     val documentRevision: Long? = null,
     val anchorBoundsInWindow: Rect? = null,
+    val properties: Map<String, MarkdownNodeValue> = metadata.properties,
+    val children: List<MarkdownNodeMetadata> = metadata.children,
 )
 
 internal val LocalMarkdownNodeClick = staticCompositionLocalOf<State<((MarkdownNodeClickEvent) -> Boolean)?>?> { null }
@@ -154,7 +162,7 @@ internal class MarkdownTextNodeClicks(
                         maxOf(left.right, right.right), maxOf(left.bottom, right.bottom))
                 }
         }
-        return handler.value?.invoke(event.copy(documentRevision = revision, anchorBoundsInWindow = bounds)) == true
+        return handler.value?.invoke(event.copy(documentRevision = revision, anchorBoundsInWindow = bounds ?: coordinates?.boundsInWindow())) == true
     }
 }
 
@@ -173,6 +181,11 @@ internal fun MarkdownBlock.nodeClickEvent(revision: Long?): MarkdownNodeClickEve
         is MarkdownFootnoteDefinition -> "FootnoteDefinition"
         is MarkdownCustomBlock -> kind
         is MarkdownUnsupportedBlock -> nodeType
+        is MarkdownContainerBlock -> kind.name
+        is MarkdownBibliographyBlock -> "BibliographyDefinition"
+        is MarkdownTocBlock -> "TocPlaceholder"
+        is MarkdownDiagramBlock -> "DiagramBlock"
+        is MarkdownPageBreakBlock -> "PageBreak"
     }
     val payload = when (this) {
         is MarkdownHeading -> mapOf("level" to level.toString()) + listOfNotNull(id?.let { "id" to it }).toMap()
@@ -213,8 +226,13 @@ internal fun MarkdownBlock.readableText(): String = when (this) {
     is MarkdownHtmlBlock -> html
     is MarkdownTable -> rows.joinToString("\n") { row -> row.cells.joinToString("\t") { it.text.value } }
     is MarkdownFootnoteDefinition -> blocks.joinToString("\n") { it.readableText() }
-    is MarkdownCustomBlock -> attributes["text"] ?: metadata.sourceMarkdown.orEmpty()
+    is MarkdownCustomBlock -> (listOfNotNull(attributes["text"]) + blocks.map { it.readableText() }).joinToString("\n")
     is MarkdownUnsupportedBlock -> fallbackText
+    is MarkdownContainerBlock -> (listOfNotNull(title?.value) + blocks.map { it.readableText() }).joinToString("\n")
+    is MarkdownBibliographyBlock -> entries.joinToString("\n", prefix = "$title\n") { "[${it.key}] ${it.text.value}" }
+    is MarkdownTocBlock -> metadata.sourceMarkdown.orEmpty()
+    is MarkdownDiagramBlock -> source
+    is MarkdownPageBreakBlock -> metadata.sourceMarkdown.orEmpty()
 }
 
 internal fun MarkdownTextMark?.nodeType(): String = when (this) {
@@ -228,6 +246,8 @@ internal fun MarkdownTextMark?.nodeType(): String = when (this) {
     MarkdownTextMark.Subscript -> "Subscript"
     MarkdownTextMark.Inserted -> "Inserted"
     MarkdownTextMark.KeyboardInput -> "KeyboardInput"
+    MarkdownTextMark.Spoiler -> "Spoiler"
+    is MarkdownTextMark.Citation -> "CitationReference"
     is MarkdownTextMark.Link -> "Link"
     is MarkdownTextMark.Abbreviation -> "Abbreviation"
     is MarkdownTextMark.Footnote -> "Footnote"
@@ -245,6 +265,7 @@ internal fun MarkdownTextMark?.nodePayload(): Map<String, String> = when (this) 
     is MarkdownTextMark.InlineMath -> mapOf("expression" to expression)
     is MarkdownTextMark.InlineImage -> mapOf("destination" to destination, "description" to description) + listOfNotNull(title?.let { "title" to it }).toMap()
     is MarkdownTextMark.Custom -> mapOf("kind" to kind)
+    is MarkdownTextMark.Citation -> mapOf("key" to key)
     else -> emptyMap()
 }
 

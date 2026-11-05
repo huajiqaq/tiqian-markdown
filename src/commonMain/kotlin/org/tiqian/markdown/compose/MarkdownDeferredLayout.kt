@@ -1,20 +1,27 @@
 package org.tiqian.markdown.compose
 
+import org.tiqian.markdown.MarkdownBibliographyBlock
 import org.tiqian.markdown.MarkdownBlock
 import org.tiqian.markdown.MarkdownBlockQuote
 import org.tiqian.markdown.MarkdownCodeBlock
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownContainerKind
 import org.tiqian.markdown.MarkdownCustomBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
 import org.tiqian.markdown.MarkdownFootnoteDefinition
 import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownHtmlBlock
 import org.tiqian.markdown.MarkdownImageBlock
 import org.tiqian.markdown.MarkdownList
 import org.tiqian.markdown.MarkdownMathBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
 import org.tiqian.markdown.MarkdownParagraph
 import org.tiqian.markdown.MarkdownTable
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownThematicBreak
+import org.tiqian.markdown.MarkdownTocBlock
 import org.tiqian.markdown.MarkdownUnsupportedBlock
+import org.tiqian.markdown.childBlocks
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -208,6 +215,13 @@ internal fun estimateMarkdownBlockHeightDp(
     fun childrenHeight(children: List<MarkdownBlock>): Float = children
         .sumOf { estimateMarkdownBlockHeightDp(it, safeWidth, style).toDouble() }
         .toFloat() + spacing * (children.size - 1).coerceAtLeast(0)
+    fun codeHeight(code: String): Float {
+        val codeLineHeight = style.codeBlock.lineHeight.value
+            .takeIf { it.isFinite() && it > 0f }
+            ?: lineHeight
+        return code.lineSequence().count().coerceAtLeast(1) * codeLineHeight +
+            style.codePadding.value * 2f
+    }
 
     return when (block) {
         is MarkdownParagraph -> textHeight(block.text)
@@ -217,17 +231,27 @@ internal fun estimateMarkdownBlockHeightDp(
             3 -> 1.2f
             else -> 1f
         }
-        is MarkdownBlockQuote -> childrenHeight(block.blocks)
+        is MarkdownBlockQuote -> childrenHeight(block.childBlocks())
         is MarkdownList -> block.items.sumOf { item ->
             childrenHeight(item.blocks).toDouble()
         }.toFloat()
-        is MarkdownCodeBlock -> {
-            val codeLineHeight = style.codeBlock.lineHeight.value
-                .takeIf { it.isFinite() && it > 0f }
-                ?: lineHeight
-            block.code.lineSequence().count().coerceAtLeast(1) * codeLineHeight +
-                style.codePadding.value * 2f
+        is MarkdownContainerBlock -> {
+            val children = block.childBlocks()
+            // `StructuralPlaceholderHeight`: columns share a row and tabs display one child;
+            // only their placeholder uses the largest child, never the actual layout.
+            val contentHeight = when (block.kind) {
+                MarkdownContainerKind.Columns,
+                MarkdownContainerKind.Tabs,
+                -> children.maxOfOrNull { estimateMarkdownBlockHeightDp(it, safeWidth, style) } ?: 0f
+                else -> childrenHeight(children)
+            }
+            (block.title?.let(::textHeight) ?: 0f) + contentHeight
         }
+        is MarkdownBibliographyBlock -> textHeight(MarkdownText(block.title)) +
+            block.entries.sumOf { textHeight(it.text).toDouble() }.toFloat() +
+            spacing * block.entries.size
+        is MarkdownCodeBlock -> codeHeight(block.code)
+        is MarkdownDiagramBlock -> codeHeight(block.source)
         is MarkdownImageBlock -> {
             val ratio = block.widthPixels
                 ?.takeIf { it > 0 }
@@ -237,10 +261,15 @@ internal fun estimateMarkdownBlockHeightDp(
         }
         is MarkdownMathBlock -> lineHeight * 2f
         is MarkdownTable -> block.rows.size.coerceAtLeast(1) * lineHeight * 1.6f
-        is MarkdownFootnoteDefinition -> childrenHeight(block.blocks)
-        is MarkdownThematicBreak -> style.tableBorderWidth.value.coerceAtLeast(1f)
+        is MarkdownFootnoteDefinition -> childrenHeight(block.childBlocks())
+        is MarkdownThematicBreak,
+        is MarkdownPageBreakBlock,
+        -> style.tableBorderWidth.value.coerceAtLeast(1f)
+        is MarkdownCustomBlock -> (block.attributes["text"]?.takeIf(String::isNotEmpty)
+            ?.let { textHeight(MarkdownText(it)) } ?: lineHeight * 1.5f) +
+            childrenHeight(block.childBlocks())
+        is MarkdownTocBlock -> lineHeight
         is MarkdownHtmlBlock,
-        is MarkdownCustomBlock,
         is MarkdownUnsupportedBlock,
         -> lineHeight * 1.5f
     }.coerceAtLeast(0f) + spacing

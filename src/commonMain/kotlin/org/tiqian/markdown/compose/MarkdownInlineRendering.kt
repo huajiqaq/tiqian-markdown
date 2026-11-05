@@ -4,17 +4,24 @@ import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextRange
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.withCompositionLocal
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
@@ -157,6 +164,18 @@ internal data class ResolvedMarkdownText(
     val interactions: List<ResolvedInlineInteraction>,
     /** Source range edges in raw LayoutResult coordinates, including source-backed replacements. */
     val sourceToRenderedOffset: (Int, Boolean) -> Int = { offset, _ -> offset },
+    val hiddenSpoilers: List<ResolvedMarkdownSpoiler> = emptyList(),
+    /** Accessibility projection only; drawing, selection and events retain the source text. */
+    val semanticsText: AnnotatedString? = null,
+)
+
+internal data class ResolvedMarkdownSpoiler(
+    val spanIndex: Int,
+    val sourceRange: MarkdownTextRange,
+    val start: Int,
+    val endExclusive: Int,
+    val color: Color,
+    val onReveal: () -> Unit,
 )
 
 internal data class ResolvedTiqianInlineObject(
@@ -252,7 +271,29 @@ internal fun resolveMarkdownText(
     onFootnoteClick: ((String) -> Unit)?,
     preparedInlineMath: Map<Int, MarkdownInlineContent> = emptyMap(),
     nodeClicks: MarkdownTextNodeClicks? = null,
+    onCitationClick: ((String) -> Unit)? = null,
 ): ResolvedMarkdownText {
+    val navigation = LocalMarkdownFootnoteNavigationState.current
+    val currentNavigation = rememberUpdatedState(navigation)
+    val currentCitationClick = rememberUpdatedState(onCitationClick)
+    val citationClick = remember(navigation != null || onCitationClick != null) {
+        if (navigation == null && onCitationClick == null) null else { citationKey: String ->
+            val callback = currentCitationClick.value
+            if (callback != null) callback(citationKey)
+            else currentNavigation.value?.bringDefinitionIntoView("bibliography:" + citationKey)
+            Unit
+        }
+    }
+    val spoilerReveals = text.spans.mapIndexedNotNull { index, span ->
+        if (span.mark != MarkdownTextMark.Spoiler) return@mapIndexedNotNull null
+        key("spoiler", span.metadata?.key ?: index) {
+            val revealed = remember(text, span.range) { mutableStateOf(false) }
+            val reveal = remember(revealed) { { revealed.value = true } }
+            if (revealed.value) null else index to reveal
+        }
+    }.toMap()
+    val spoilerColor = textStyle.color.takeIf { it != Color.Unspecified }
+        ?: style.body.color.takeIf { it != Color.Unspecified } ?: Color(0xFF202124)
     val needsInlineSlotResolution = remember(text.spans, inlineSlots) {
         text.spans.any { span ->
             when (span.mark) {
@@ -264,7 +305,7 @@ internal fun resolveMarkdownText(
         }
     }
     if (!needsInlineSlotResolution) {
-        return remember(text, style, onLinkClick, onFootnoteClick, nodeClicks) {
+        return remember(text, style, onLinkClick, onFootnoteClick, citationClick, spoilerReveals, spoilerColor, nodeClicks) {
             buildResolvedMarkdownText(
                 text = text,
                 style = style,
@@ -272,6 +313,9 @@ internal fun resolveMarkdownText(
                 customPresentations = emptyMap(),
                 onLinkClick = onLinkClick,
                 onFootnoteClick = onFootnoteClick,
+                onCitationClick = citationClick,
+                spoilerReveals = spoilerReveals,
+                spoilerColor = spoilerColor,
             ).withNodeClicks(text, nodeClicks)
         }
     }
@@ -314,7 +358,15 @@ internal fun resolveMarkdownText(
 
             is MarkdownTextMark.Custom -> inlineSlots.custom?.let { slot ->
                 key("custom", index) { withCompositionLocal(LocalMarkdownInlineNodeClick provides inlineNodeScope) { slot(mark, style, textStyle) } }?.let { presentation ->
-                    customPresentations += CustomPresentation(index, presentation)
+                    val currentClick = rememberUpdatedState(presentation.onClick)
+                    val stableClick = remember(presentation.onClick != null) {
+                        if (presentation.onClick == null) null else { value: String -> currentClick.value?.invoke(value); Unit }
+                    }
+                    val currentLabel = rememberUpdatedState(presentation.accessibilityLabel)
+                    val stableLabel = remember(presentation.accessibilityLabel != null) {
+                        if (presentation.accessibilityLabel == null) null else { value: String -> currentLabel.value?.invoke(value) ?: value }
+                    }
+                    customPresentations += CustomPresentation(index, presentation.copy(onClick = stableClick, accessibilityLabel = stableLabel))
                 }
             }
 
@@ -331,6 +383,9 @@ internal fun resolveMarkdownText(
         presentationsByIndex,
         onLinkClick,
         onFootnoteClick,
+        citationClick,
+        spoilerReveals,
+        spoilerColor,
         nodeClicks,
     ) {
         buildResolvedMarkdownText(
@@ -340,6 +395,9 @@ internal fun resolveMarkdownText(
             customPresentations = presentationsByIndex,
             onLinkClick = onLinkClick,
             onFootnoteClick = onFootnoteClick,
+            onCitationClick = citationClick,
+            spoilerReveals = spoilerReveals,
+            spoilerColor = spoilerColor,
         ).withNodeClicks(text, nodeClicks, if (nodeClicks == null) emptyMap() else customPresentations.mapNotNull { custom ->
             custom.presentation.accessibilityLabel?.let { label ->
                 val range = text.spans[custom.spanIndex].range
@@ -416,6 +474,7 @@ internal fun MarkdownText.toAnnotatedString(
     style: MarkdownStyle,
     onLinkClick: ((String) -> Unit)? = null,
     onFootnoteClick: ((String) -> Unit)? = null,
+    onCitationClick: ((String) -> Unit)? = null,
 ): AnnotatedString = buildResolvedMarkdownText(
     text = this,
     style = style,
@@ -423,6 +482,7 @@ internal fun MarkdownText.toAnnotatedString(
     customPresentations = emptyMap(),
     onLinkClick = onLinkClick,
     onFootnoteClick = onFootnoteClick,
+    onCitationClick = onCitationClick,
 ).annotated
 
 private fun buildResolvedMarkdownText(
@@ -432,6 +492,9 @@ private fun buildResolvedMarkdownText(
     customPresentations: Map<Int, CustomPresentation>,
     onLinkClick: ((String) -> Unit)?,
     onFootnoteClick: ((String) -> Unit)?,
+    onCitationClick: ((String) -> Unit)? = null,
+    spoilerReveals: Map<Int, () -> Unit> = emptyMap(),
+    spoilerColor: Color = Color(0xFF202124),
 ): ResolvedMarkdownText {
     val nonOverlappingReplacements = replacements.fold(mutableListOf<InlineReplacement>()) { accepted, candidate ->
         if (accepted.lastOrNull()?.range?.endExclusive?.let { it > candidate.range.start } != true) {
@@ -444,6 +507,12 @@ private fun buildResolvedMarkdownText(
     val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
+    val hiddenSpoilers = spoilerReveals.mapNotNull { (index, reveal) ->
+        val range = text.spans[index].range
+        val start = mapOffset(range.start, nonOverlappingReplacements, end = false)
+        val end = mapOffset(range.endExclusive, nonOverlappingReplacements, end = true)
+        if (start == end) null else ResolvedMarkdownSpoiler(index, range, start, end, spoilerColor, reveal)
+    }
     val annotated = AnnotatedString.Builder(base).apply {
         fun addRendererOwnedInlineCode(start: Int, end: Int) {
             addStyle(style.inlineCode.copy(background = Color.Unspecified), start, end)
@@ -574,6 +643,20 @@ private fun buildResolvedMarkdownText(
                     )
                 }
 
+                MarkdownTextMark.Spoiler -> Unit
+                is MarkdownTextMark.Citation -> {
+                    addCjkInteractionOnlyAnnotation(start, end)
+                    addLink(
+                        LinkAnnotation.Clickable(
+                            tag = "markdown-citation-$index",
+                            styles = TextLinkStyles(style = style.link),
+                            linkInteractionListener = { onCitationClick?.invoke(mark.key) },
+                        ),
+                        start,
+                        end,
+                    )
+                }
+
                 is MarkdownTextMark.Ruby -> Unit
                 is MarkdownTextMark.InlineMath -> if (index !in replacementIndexes) {
                     addRendererOwnedInlineCode(start, end)
@@ -623,6 +706,17 @@ private fun buildResolvedMarkdownText(
             }
         }
     }.toAnnotatedString()
+    hiddenSpoilers.forEach { spoiler ->
+        backgrounds += ResolvedInlineBackground(
+            start = spoiler.start,
+            endExclusive = spoiler.endExclusive,
+            color = spoiler.color,
+            horizontalPadding = 0.dp,
+            verticalPadding = style.highlightVerticalPadding,
+            cornerRadius = style.highlightCornerRadius,
+            adjacentSameStyleClearance = style.adjacentSameStyleClearance,
+        )
+    }
 
     return ResolvedMarkdownText(
         annotated = annotated,
@@ -643,7 +737,10 @@ private fun buildResolvedMarkdownText(
                 ResolvedTiqianInlineObject(
                     start = start,
                     endExclusive = endExclusive,
-                    content = replacement.content,
+                    content = if (hiddenSpoilers.any { it.start <= start && it.endExclusive >= endExclusive }) {
+                        val color = hiddenSpoilers.first { it.start <= start && it.endExclusive >= endExclusive }.color
+                        replacement.content.copy(content = { Box(Modifier.fillMaxSize().background(color)) })
+                    } else replacement.content,
                 )
             }
         },
@@ -651,6 +748,7 @@ private fun buildResolvedMarkdownText(
         decorations = decorations,
         interactions = interactions,
         sourceToRenderedOffset = { offset, end -> mapOffset(offset, nonOverlappingReplacements, end) },
+        hiddenSpoilers = hiddenSpoilers,
     )
 }
 
@@ -706,14 +804,18 @@ private fun mapOffset(
 
 internal fun Modifier.markdownInlineInteractionSemantics(
     interactions: List<ResolvedInlineInteraction>,
+    semanticsText: AnnotatedString? = null,
 ): Modifier {
-    if (interactions.isEmpty()) return this
-    return semantics {
-        customActions = interactions.map { interaction ->
-            CustomAccessibilityAction(interaction.accessibilityLabel) {
-                interaction.onClick()
-                true
-            }
+    if (interactions.isEmpty() && semanticsText == null) return this
+    val actions = interactions.map { interaction ->
+        CustomAccessibilityAction(interaction.accessibilityLabel) {
+            interaction.onClick()
+            true
         }
+    }
+    return if (semanticsText == null) semantics { customActions = actions }
+    else clearAndSetSemantics {
+        text = semanticsText
+        customActions = actions
     }
 }

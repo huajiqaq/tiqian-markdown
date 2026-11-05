@@ -32,20 +32,13 @@ private fun collectFootnoteDefinitions(
     destination: LinkedHashMap<String, MarkdownFootnoteDefinition>,
 ) {
     blocks.forEach { block ->
-        when (block) {
-            is MarkdownFootnoteDefinition -> {
-                destination.putIfAbsent(
-                    block.label,
-                    block.copy(blocks = stripFootnoteDefinitions(block.blocks)),
-                )
-                collectFootnoteDefinitions(block.blocks, destination)
-            }
-            is MarkdownBlockQuote -> collectFootnoteDefinitions(block.blocks, destination)
-            is MarkdownList -> block.items.forEach { item ->
-                collectFootnoteDefinitions(item.blocks, destination)
-            }
-            else -> Unit
+        if (block is MarkdownFootnoteDefinition) {
+            destination.putIfAbsent(
+                block.label,
+                block.copy(blocks = stripFootnoteDefinitions(block.blocks)),
+            )
         }
+        collectFootnoteDefinitions(block.childBlocks(), destination)
     }
 }
 
@@ -59,6 +52,8 @@ private fun stripFootnoteDefinitions(blocks: List<MarkdownBlock>): List<Markdown
                     item.copy(blocks = stripFootnoteDefinitions(item.blocks))
                 },
             )
+            is MarkdownContainerBlock -> block.copy(blocks = stripFootnoteDefinitions(block.blocks))
+            is MarkdownCustomBlock -> block.copy(blocks = stripFootnoteDefinitions(block.blocks))
             else -> block
         }
     }
@@ -116,21 +111,9 @@ private fun List<MarkdownBlock>.placeFootnotesAtSectionEnds(
     return result
 }
 
-private fun MarkdownBlock.directFootnoteReferences(): List<String> = when (this) {
-    is MarkdownParagraph -> text.footnoteReferences()
-    is MarkdownHeading -> text.footnoteReferences()
-    is MarkdownImageBlock -> caption?.footnoteReferences().orEmpty()
-    is MarkdownTable -> buildList {
-        caption?.let { addAll(it.footnoteReferences()) }
-        rows.forEach { row -> row.cells.forEach { cell -> addAll(cell.text.footnoteReferences()) } }
-    }
-    else -> emptyList()
-}
-
-private fun MarkdownBlock.allFootnoteReferences(): List<String> = when (this) {
-    is MarkdownBlockQuote -> blocks.flatMap { it.allFootnoteReferences() }
-    is MarkdownList -> items.flatMap { item -> item.blocks.flatMap { it.allFootnoteReferences() } }
-    else -> directFootnoteReferences()
+private fun MarkdownBlock.allFootnoteReferences(): List<String> = buildList {
+    directTexts().forEach { addAll(it.footnoteReferences()) }
+    childBlocks().forEach { addAll(it.allFootnoteReferences()) }
 }
 
 private fun MarkdownText.footnoteReferences(): List<String> = buildList {

@@ -51,8 +51,19 @@ Callbacks update through Compose state without rebuilding the document or measur
 
 These extension points do not introduce parsing. Hosts construct Custom block/inline values or use
 metadata-only spans for their own syntax. The public sealed model does not accept arbitrary external
-subclasses; Custom blocks do not expose child blocks, and Custom inline presentations do not contain
-arbitrary Compose content.
+subclasses; Custom blocks preserve ordered child blocks, and Custom inline presentations do not contain
+arbitrary Compose content. `MarkdownContainerBlock` supplies structural roles for definition lists, admonitions,
+custom containers, columns and tabs. Original parser names remain in metadata; container slots receive a
+default-content function which retains the title, structure, layout, selection and event context. Bibliography, TOC,
+diagram source and page breaks have explicit pure-data block models. Metadata retains typed `MarkdownNodeValue`
+properties and ordered child metadata, including definitions with no visible hit region. The adapter builds
+this tree once and references it from displayed blocks and spans; parser objects never enter the model.
+
+A tab control offers its original TabItem before switching the selected body. A TOC row offers the referenced
+heading and its TOC/document ancestors before navigating; navigation materializes the owning deferred block
+and activates a containing tab when necessary. Bibliography entries register their current positions for
+citation navigation. Diagram blocks present selectable source without executing an external renderer;
+page breaks present a screen separator until a print host supplies actual page boundaries.
 
 Colour selection has two named modes without changing any layout geometry. `MarkdownPalette.Default`
 uses Tiqian's stable built-in colours. `MarkdownPalette.Platform` maps the current Material 3 colour

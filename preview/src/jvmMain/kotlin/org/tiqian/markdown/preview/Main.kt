@@ -80,6 +80,7 @@ private val PreviewCases = listOf(
     PreviewCase("引用与列表", PreviewDocuments.quoteAndLists, width = 420),
     PreviewCase("代码、公式与表格", PreviewDocuments.codeMathAndTable, width = 600),
     PreviewCase("图片与查看器", PreviewDocuments.images, width = 600),
+    PreviewCase("完整节点与事件", NodeEventsPreviewDocument, width = 600),
 )
 
 private val PreviewWidths = listOf(360, 420, 600, 840)
@@ -141,7 +142,11 @@ private fun rememberPreviewImageProvider(): MarkdownImageProvider {
 }
 
 fun main(args: Array<String>) {
-    if ("--footnote-attachment-specimen" in args) {
+    if ("--node-events-specimen" in args) {
+        val path = args.getOrNull(args.indexOf("--node-events-specimen") + 1) ?: "build/specimens/node-events"
+        exportNodeEventsSpecimen(File(path))
+        exitProcess(0)
+    } else if ("--footnote-attachment-specimen" in args) {
         exportFootnoteAttachmentSpecimen()
         exitProcess(0)
     } else {

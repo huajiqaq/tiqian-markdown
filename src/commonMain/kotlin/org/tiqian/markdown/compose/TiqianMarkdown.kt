@@ -2,24 +2,27 @@ package org.tiqian.markdown.compose
 
 import org.tiqian.markdown.DefaultMarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownBlock
-import org.tiqian.markdown.MarkdownBlockQuote
+import org.tiqian.markdown.MarkdownContainerBlock
+import org.tiqian.markdown.MarkdownBibliographyBlock
+import org.tiqian.markdown.MarkdownTocBlock
+import org.tiqian.markdown.MarkdownDiagramBlock
+import org.tiqian.markdown.MarkdownPageBreakBlock
 import org.tiqian.markdown.MarkdownCodeBlock
 import org.tiqian.markdown.MarkdownCodeHighlighter
 import org.tiqian.markdown.MarkdownCustomBlock
 import org.tiqian.markdown.MarkdownFootnoteDefinition
 import org.tiqian.markdown.MarkdownFootnotePlacement
-import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownHtmlBlock
 import org.tiqian.markdown.MarkdownImageBlock
-import org.tiqian.markdown.MarkdownList
 import org.tiqian.markdown.MarkdownMathBlock
-import org.tiqian.markdown.MarkdownParagraph
 import org.tiqian.markdown.MarkdownRenderDocument
 import org.tiqian.markdown.MarkdownTable
 import org.tiqian.markdown.MarkdownText
 import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownThematicBreak
 import org.tiqian.markdown.MarkdownUnsupportedBlock
+import org.tiqian.markdown.childBlocks
+import org.tiqian.markdown.directTexts
 import org.tiqian.markdown.markdownImageGallery
 import org.tiqian.markdown.placeFootnotes
 
@@ -49,6 +52,12 @@ class MarkdownBlockSlots(
     val customBlock: (@Composable (MarkdownCustomBlock, MarkdownStyle) -> Unit)? = null,
     val thematicBreak: (@Composable (MarkdownThematicBreak, MarkdownStyle) -> Unit)? = null,
     val unsupportedBlock: (@Composable (MarkdownUnsupportedBlock, MarkdownStyle) -> Unit)? = null,
+    /** Children/default content retain the current selection, navigation and node-event context. */
+    val container: (@Composable (MarkdownContainerBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val bibliography: (@Composable (MarkdownBibliographyBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val tableOfContents: (@Composable (MarkdownTocBlock, MarkdownStyle, defaultContent: @Composable () -> Unit) -> Unit)? = null,
+    val diagram: (@Composable (MarkdownDiagramBlock, MarkdownStyle) -> Unit)? = null,
+    val pageBreak: (@Composable (MarkdownPageBreakBlock, MarkdownStyle) -> Unit)? = null,
 )
 
 val DefaultMarkdownBlockSlots: MarkdownBlockSlots = MarkdownBlockSlots()
@@ -82,8 +91,14 @@ fun TiqianMarkdown(
         }
     }
     val footnoteOwnerKeys = remember(placedBlocks) {
-        placedBlocks.filterIsInstance<MarkdownFootnoteDefinition>()
-            .associate { it.label to it.metadata.key }
+        buildMap {
+            fun collect(block: MarkdownBlock, owner: MarkdownBlock) {
+                if (block is MarkdownFootnoteDefinition) put(block.label, owner.metadata.key)
+                if (block is MarkdownBibliographyBlock) block.entries.forEach { put("bibliography:" + it.key, owner.metadata.key) }
+                block.childBlocks().forEach { collect(it, owner) }
+            }
+            placedBlocks.forEach { collect(it, it) }
+        }
     }
     val footnoteNavigationState = rememberMarkdownFootnoteNavigationState(
         materializeDefinition = { label ->
@@ -119,6 +134,8 @@ fun TiqianMarkdown(
         LocalMarkdownMathRuntime provides mathRuntime,
         LocalMarkdownNodeClick provides rememberUpdatedState(onNodeClick),
         LocalMarkdownDocumentRevision provides document.revision,
+        LocalMarkdownDocumentBlocks provides placedBlocks,
+        LocalMarkdownHeadingNavigation provides rememberMarkdownHeadingNavigation(placedBlocks, deferredLayout),
     ) {
         val nodeClickEnabled = LocalMarkdownNodeClick.current?.value != null
         MarkdownNodeClickScope(modifier = modifier, event = {
@@ -200,24 +217,9 @@ fun TiqianMarkdown(
 }
 
 internal fun List<MarkdownBlock>.containsMarkdownMath(): Boolean = any { block ->
-    when (block) {
-        is MarkdownMathBlock -> true
-        is MarkdownParagraph -> block.text.containsMarkdownMath()
-        is MarkdownHeading -> block.text.containsMarkdownMath()
-        is MarkdownBlockQuote -> block.blocks.containsMarkdownMath()
-        is MarkdownList -> block.items.any { it.blocks.containsMarkdownMath() }
-        is MarkdownImageBlock -> block.caption?.containsMarkdownMath() == true
-        is MarkdownTable ->
-            block.caption?.containsMarkdownMath() == true ||
-                block.rows.any { row -> row.cells.any { it.text.containsMarkdownMath() } }
-        is MarkdownFootnoteDefinition -> block.blocks.containsMarkdownMath()
-        is MarkdownCodeBlock,
-        is MarkdownCustomBlock,
-        is MarkdownHtmlBlock,
-        is MarkdownThematicBreak,
-        is MarkdownUnsupportedBlock,
-        -> false
-    }
+    block is MarkdownMathBlock ||
+        block.directTexts().any { it.containsMarkdownMath() } ||
+        block.childBlocks().containsMarkdownMath()
 }
 
 private fun MarkdownText.containsMarkdownMath(): Boolean =

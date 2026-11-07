@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.ImageComposeScene
 import androidx.compose.ui.Modifier
@@ -23,6 +24,7 @@ import org.tiqian.markdown.MarkdownSourceSpan
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalComposeUiApi::class)
@@ -56,15 +58,28 @@ class MarkdownImageDisplayBoundsTest {
     @Test
     fun defaultBoundsPreserveNaturalSizing() = runBlocking {
         var displayed = IntSize.Zero
+        val intrinsic = IntSize(400, 200)
+        val content: @Composable (Modifier) -> Unit = { modifier ->
+            Box(modifier.onSizeChanged { displayed = it }.background(Color.Blue))
+        }
+        val presentations = listOf(
+            MarkdownImageContent(intrinsic, MarkdownImageLoadState.Success, null, content),
+            MarkdownImageContent(intrinsicSize = intrinsic, loadState = MarkdownImageLoadState.Success, content = content),
+            MarkdownImageContent(intrinsic, MarkdownImageLoadState.Success) { content(it) },
+            MarkdownImageContent(intrinsic, MarkdownImageLoadState.Success, null) { content(it) },
+        )
+        presentations.forEach { image ->
+            assertEquals(intrinsic, image.intrinsicSize)
+            assertEquals(Dp.Infinity, image.maxDisplayWidth)
+            assertEquals(Dp.Infinity, image.maxDisplayHeight)
+            assertEquals(null, image.onLongClick)
+        }
+        assertSame(content, presentations.first().content)
         val block = MarkdownImageBlock("test:image", "Image", null, 400, 200,
             MarkdownNodeMetadata(MarkdownNodeKey(1, listOf(0)), MarkdownSourceSpan(0, 0, 0, 0, 0, 0)))
         ImageComposeScene(width = 720, height = 800, coroutineContext = coroutineContext) {
             MaterialTheme {
-                CompositionLocalProvider(LocalMarkdownImageProvider provides {
-                    MarkdownImageContent(IntSize(400, 200), MarkdownImageLoadState.Success) { modifier ->
-                        Box(modifier.onSizeChanged { displayed = it }.background(Color.Blue))
-                    }
-                }) {
+                CompositionLocalProvider(LocalMarkdownImageProvider provides { presentations.first() }) {
                     DefaultMarkdownImageBlock(block, MarkdownStyle())
                 }
             }

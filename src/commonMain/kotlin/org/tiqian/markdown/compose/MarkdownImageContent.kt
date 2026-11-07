@@ -34,6 +34,13 @@ class MarkdownImageContent(
     val onLongClick: (() -> Unit)? = null,
     val content: @Composable (Modifier) -> Unit,
 ) {
+    constructor(
+        intrinsicSize: IntSize?,
+        loadState: MarkdownImageLoadState,
+        progress: Float? = null,
+        content: @Composable (Modifier) -> Unit,
+    ) : this(intrinsicSize, loadState, progress, Dp.Infinity, Dp.Infinity, null, content)
+
     init {
         require(maxDisplayWidth >= 0.dp && maxDisplayHeight >= 0.dp)
     }

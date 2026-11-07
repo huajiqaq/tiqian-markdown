@@ -197,7 +197,9 @@ class MarkdownTextSearchState internal constructor(
                     if (found < 0) break
                     val start = text.starts[found]
                     val end = text.ends[found + needle.length - 1]
-                    if (fragment.atomicRanges.any { start < it.endExclusive && end > it.start }) {
+                    val splitsSurrogate = (start > 0 && text.source[start].isLowSurrogate() && text.source[start - 1].isHighSurrogate()) ||
+                        (end < text.source.length && text.source[end].isLowSurrogate() && text.source[end - 1].isHighSurrogate())
+                    if (splitsSurrogate || fragment.atomicRanges.any { start < it.endExclusive && end > it.start }) {
                         // Rejected candidates must not hide an overlapping match in adjacent prose.
                         from = found + 1
                         continue

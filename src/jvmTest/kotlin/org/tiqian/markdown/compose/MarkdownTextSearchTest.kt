@@ -88,9 +88,18 @@ class MarkdownTextSearchTest {
         assertTrue(first.excerpt.contains("😀"))
         state.setQuery("e\u0301")
         assertEquals(2, state.matches.single().let { it.endInFragment - it.startInFragment })
+        state.setQuery("\u0301")
+        assertEquals(source.indexOf('\u0301') to source.indexOf('\u0301') + 1,
+            state.matches.single().let { it.startInFragment to it.endInFragment })
+        for (query in listOf("\uD83D", "\uDE00")) {
+            state.setQuery(query)
+            assertTrue(state.matches.isEmpty(), "a match must not split the authored emoji")
+        }
         state.setQuery("😀")
         assertEquals(0, state.matches.single().startInFragment)
         assertEquals(2, state.matches.single().endInFragment)
+        state.setQuery("前")
+        assertEquals(2 to 3, state.matches.single().let { it.startInFragment to it.endInFragment })
         state.setQuery("\u00a0\t\u3000")
         assertTrue(state.matches.isEmpty())
     }

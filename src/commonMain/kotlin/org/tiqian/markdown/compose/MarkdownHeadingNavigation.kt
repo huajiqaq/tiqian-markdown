@@ -40,7 +40,7 @@ internal class MarkdownHeadingNavigation(
         if (requesters[key] === requester) requesters.remove(key)
     }
 
-    fun navigate(key: MarkdownNodeKey) {
+    fun activateAncestors(key: MarkdownNodeKey): MarkdownNodeKey? {
         fun activate(block: MarkdownBlock): Boolean {
             if (block.metadata.key == key) return true
             val children = block.childBlocks()
@@ -52,12 +52,16 @@ internal class MarkdownHeadingNavigation(
             }
             return false
         }
-        val owner = blocks.firstOrNull(::activate) ?: return
+        return blocks.firstOrNull(::activate)?.metadata?.key
+    }
+
+    fun navigate(key: MarkdownNodeKey) {
+        val ownerKey = activateAncestors(key) ?: return
         val requester = requesters[key]
         if (requester != null) scope.launch { requester.bringIntoView() }
         else {
             pending += key
-            materialize(owner.metadata.key)
+            materialize(ownerKey)
         }
     }
 }

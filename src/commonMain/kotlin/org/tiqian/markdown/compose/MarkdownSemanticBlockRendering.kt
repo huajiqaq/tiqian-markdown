@@ -37,6 +37,7 @@ import org.tiqian.markdown.MarkdownContainerKind
 import org.tiqian.markdown.MarkdownDiagramBlock
 import org.tiqian.markdown.MarkdownHeading
 import org.tiqian.markdown.MarkdownText
+import org.tiqian.markdown.MarkdownTextMark
 import org.tiqian.markdown.MarkdownTextSpan
 import org.tiqian.markdown.MarkdownTextRange
 import org.tiqian.markdown.MarkdownTocBlock
@@ -96,7 +97,7 @@ fun DefaultMarkdownContainerBlock(
                                 },
                                 modifier = Modifier.semantics { role = Role.Tab; this.selected = selected == index },
                             ) {
-                                Text((child as? MarkdownContainerBlock)?.title?.value ?: "${index + 1}",
+                                Text((child as? MarkdownContainerBlock)?.title?.let { markdownControlLabel(it, style) } ?: "${index + 1}",
                                     style = style.body.copy(fontWeight = if (selected == index) FontWeight.Bold else FontWeight.Normal),
                                     color = if (selected == index) style.link.color else style.body.color)
                             }
@@ -194,11 +195,20 @@ fun DefaultMarkdownTocBlock(
                 val click = rememberMarkdownNodeClickHandler()
                 TextButton(onClick = { if (click?.invoke() != true) navigation?.navigate(heading.metadata.key) },
                     modifier = Modifier.padding(start = 12.dp * (heading.level - block.minDepth).coerceAtLeast(0))) {
-                    Text(heading.text.value, style = style.body, color = style.link.color)
+                    Text(markdownControlLabel(heading.text, style), style = style.body, color = style.link.color)
                 }
             }
         }
     }
+}
+
+@Composable
+private fun markdownControlLabel(text: MarkdownText, style: MarkdownStyle): String {
+    // Derived labels conceal spoilers without resolving host inline slots or adding child controls.
+    val labelText = remember(text) { text.copy(spans = text.spans.filter { it.mark == MarkdownTextMark.Spoiler }) }
+    if (labelText.spans.isEmpty()) return text.value
+    return resolveMarkdownText(labelText, style, style.body, DefaultMarkdownInlineSlots, null, null)
+        .semanticsText?.text ?: text.value
 }
 
 @Composable

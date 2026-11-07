@@ -90,19 +90,24 @@ fun TiqianMarkdown(
             document.placeFootnotes(footnotePlacement)
         }
     }
-    val footnoteOwnerKeys = remember(placedBlocks) {
+    val headingNavigation = rememberMarkdownHeadingNavigation(placedBlocks, deferredLayout)
+    val footnoteTargetKeys = remember(placedBlocks) {
         buildMap {
-            fun collect(block: MarkdownBlock, owner: MarkdownBlock) {
-                if (block is MarkdownFootnoteDefinition) put(block.label, owner.metadata.key)
-                if (block is MarkdownBibliographyBlock) block.entries.forEach { put("bibliography:" + it.key, owner.metadata.key) }
-                block.childBlocks().forEach { collect(it, owner) }
+            fun collect(block: MarkdownBlock) {
+                if (block is MarkdownFootnoteDefinition) put(block.label, block.metadata.key)
+                if (block is MarkdownBibliographyBlock) block.entries.forEach { put("bibliography:" + it.key, block.metadata.key) }
+                block.childBlocks().forEach(::collect)
             }
-            placedBlocks.forEach { collect(it, it) }
+            placedBlocks.forEach(::collect)
         }
     }
     val footnoteNavigationState = rememberMarkdownFootnoteNavigationState(
+        document = document,
         materializeDefinition = { label ->
-            footnoteOwnerKeys[label]?.let { key -> deferredLayout?.onMaterializeOwner?.invoke(key) } == true
+            footnoteTargetKeys[label]?.let(headingNavigation::activateAncestors)?.let { ownerKey ->
+                deferredLayout?.onMaterializeOwner?.invoke(ownerKey)
+                true
+            } == true
         },
     )
     val imageGallery = remember(placedBlocks) {
@@ -135,7 +140,7 @@ fun TiqianMarkdown(
         LocalMarkdownNodeClick provides rememberUpdatedState(onNodeClick),
         LocalMarkdownDocumentRevision provides document.revision,
         LocalMarkdownDocumentBlocks provides placedBlocks,
-        LocalMarkdownHeadingNavigation provides rememberMarkdownHeadingNavigation(placedBlocks, deferredLayout),
+        LocalMarkdownHeadingNavigation provides headingNavigation,
     ) {
         val nodeClickEnabled = LocalMarkdownNodeClick.current?.value != null
         MarkdownNodeClickScope(modifier = modifier, event = {

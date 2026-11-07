@@ -7,6 +7,9 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
+import org.tiqian.markdown.MarkdownRenderDocument
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -21,7 +24,11 @@ internal class MarkdownFootnoteNavigationState(
     fun registerDefinition(label: String, requester: BringIntoViewRequester) {
         definitions[label] = requester
         if (pendingLabels.remove(label)) {
-            coroutineScope.launch { requester.bringIntoView() }
+            coroutineScope.launch {
+                // Registration precedes placement; relocation needs the target's attached coordinates.
+                withFrameNanos { }
+                if (definitions[label] === requester) requester.bringIntoView()
+            }
         }
     }
 
@@ -44,10 +51,12 @@ internal val LocalMarkdownFootnoteNavigationState =
 
 @Composable
 internal fun rememberMarkdownFootnoteNavigationState(
+    document: MarkdownRenderDocument? = null,
     materializeDefinition: (String) -> Boolean = { false },
 ): MarkdownFootnoteNavigationState {
     val coroutineScope = rememberCoroutineScope()
-    return remember(coroutineScope, materializeDefinition) {
-        MarkdownFootnoteNavigationState(coroutineScope, materializeDefinition)
+    val currentMaterializeDefinition = rememberUpdatedState(materializeDefinition)
+    return remember(coroutineScope, document) {
+        MarkdownFootnoteNavigationState(coroutineScope) { currentMaterializeDefinition.value(it) }
     }
 }

@@ -761,7 +761,7 @@ internal fun DeferredMarkdownBlocks(
             .coerceIn(constraints.minHeight, constraints.maxHeight)
         layout(width.coerceIn(constraints.minWidth, constraints.maxWidth), resolvedHeight) {
             placeables.forEach { (index, placeable) ->
-                placeable.placeRelative(0, blockTops[index])
+                placeable.placeRelativeWithLayer(0, blockTops[index])
             }
         }
     }

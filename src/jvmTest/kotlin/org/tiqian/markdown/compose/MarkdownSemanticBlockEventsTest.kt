@@ -255,6 +255,38 @@ class MarkdownSemanticBlockEventsTest {
     }
 
     @Test
+    fun firstTocClickScrollsHiddenTabHeadingIntoViewInMarkdownAndSurface() {
+        val heading = MarkdownHeading(2, "target", MarkdownText("target heading"), metadata(listOf(1, 1, 1), "Heading"))
+        val tabs = MarkdownContainerBlock(MarkdownContainerKind.Tabs, listOf(
+            MarkdownContainerBlock(MarkdownContainerKind.Tab, emptyList(), metadata(listOf(1, 0), "TabItem"), MarkdownText("First")),
+            MarkdownContainerBlock(MarkdownContainerKind.Tab, listOf(
+                paragraph(listOf(1, 1, 0), "before heading\n".repeat(40)), heading,
+            ), metadata(listOf(1, 1), "TabItem"), MarkdownText("Second")),
+        ), metadata(listOf(1), "TabBlock"))
+        val document = MarkdownRenderDocument(listOf(MarkdownTocBlock(metadata(listOf(0), "TocPlaceholder")), tabs))
+        val viewportHeight = 540
+        for (surface in listOf(false, true)) {
+            val scroll = ScrollState(0)
+            ImageComposeScene(width = 640, height = viewportHeight, density = Density(1f)) {
+                if (surface) TiqianMarkdownSurface(document, Modifier.fillMaxSize(), scrollState = scroll, selectable = false, style = MarkdownStyle())
+                else TiqianMarkdown(document, Modifier.fillMaxSize().verticalScroll(scroll), style = MarkdownStyle())
+            }.use { scene ->
+                scene.settle(0L)
+                assertEquals(0, scroll.value)
+                val toc = scene.control(heading.text.value, tab = false)
+                assertTrue(assertNotNull(toc.config[SemanticsActions.OnClick].action).invoke())
+                scene.settle(100_000_000L, frames = 40)
+                assertTrue(scene.control("Second").config[SemanticsProperties.Selected])
+                assertTrue(scroll.value > 0, "first click must scroll, surface=$surface")
+                val target = scene.nodes(true).single { it.hasText(heading.text.value) && it.config.getOrNull(SemanticsProperties.Role) != Role.Button }
+                val bounds = target.boundsInRoot
+                assertTrue(bounds.height > 0f && bounds.height == target.size.height.toFloat() && bounds.top >= 0f && bounds.bottom <= viewportHeight,
+                    "body heading must be fully visible: $bounds, scroll=${scroll.value}, surface=$surface")
+            }
+        }
+    }
+
+    @Test
     fun tocAndTabLabelsConcealSpoilersWhileControlsRetainOriginalEventsAndBodyReveal() {
         val source = "public secret"
         val concealed = MarkdownText(source, listOf(
@@ -329,8 +361,8 @@ class MarkdownSemanticBlockEventsTest {
     private fun ImageComposeScene.control(label: String, tab: Boolean = true) = nodes(true)
         .single { it.hasText(label) && SemanticsActions.OnClick in it.config && (!tab || SemanticsProperties.Selected in it.config) }
 
-    private fun ImageComposeScene.settle(startTimeNanos: Long) {
-        repeat(6) { frame ->
+    private fun ImageComposeScene.settle(startTimeNanos: Long, frames: Int = 6) {
+        repeat(frames) { frame ->
             Snapshot.sendApplyNotifications()
             render(startTimeNanos + frame * 16_000_000L).close()
         }

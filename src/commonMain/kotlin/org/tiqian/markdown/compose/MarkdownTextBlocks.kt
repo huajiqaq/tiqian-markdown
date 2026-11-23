@@ -6,11 +6,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import org.tiqian.compose.CjkInlineObject
@@ -25,6 +34,7 @@ import org.tiqian.core.ParagraphStyle
 import org.tiqian.markdown.MarkdownText
 
 private val LocalMarkdownSelectionFragmentKey = staticCompositionLocalOf<Any?> { null }
+private val IgnoreMarkdownTextLayout: (org.tiqian.core.LayoutResult) -> Unit = {}
 
 internal val LocalMarkdownSelectionRetentionKey = staticCompositionLocalOf<Any?> { null }
 
@@ -57,6 +67,7 @@ internal fun MarkdownTextBlock(
     val paragraphMeasurer = rememberMarkdownParagraphMeasurer()
     val selectionFragmentKey = LocalMarkdownSelectionFragmentKey.current
     val precomputed = selectionFragmentKey?.let(LocalMarkdownPrecomputedLayouts.current::get)
+    val searchTarget = rememberMarkdownTextSearchTarget(selectionFragmentKey)
     val footnoteNavigationState = LocalMarkdownFootnoteNavigationState.current
     val currentLinkClick = rememberUpdatedState(onLinkClick)
     val currentFootnoteClick = rememberUpdatedState(onFootnoteClick)
@@ -94,21 +105,32 @@ internal fun MarkdownTextBlock(
         nodeClicks = nodeClicks,
     )
     val density = LocalDensity.current
-    val tiqianInlineObjects = remember(resolved.tiqianInlineObjects, density) {
+    val tiqianInlineObjects = remember(resolved.tiqianInlineObjects, resolved.endMarkers, density) {
         resolved.toCjkInlineObjects(density)
     }
     val inlineDecorations = remember(resolved.decorations) {
         resolved.decorations.toCjkInlineDecorations()
     }
-    val inlineBackgrounds = remember(resolved.backgrounds) {
+    val authoredBackgrounds = remember(resolved.backgrounds) {
         resolved.backgrounds.toCjkInlineBackgrounds()
     }
+    val searchBackgrounds = searchTarget?.highlightBackgrounds(resolved).orEmpty()
+    // CjkText paints backgrounds in order, before native selection and glyphs.
+    val inlineBackgrounds = if (searchBackgrounds.isEmpty()) authoredBackgrounds else authoredBackgrounds + searchBackgrounds
+    // Search range boundaries and measured end markers are absent from the authored prelayout.
+    val precomputedLayout = if (searchBackgrounds.isEmpty() && resolved.endMarkers.isEmpty()) precomputed?.layout else null
     nodeClicks?.sourceToRenderedOffset = resolved.sourceToRenderedOffset
     val textModifier = modifier
+        .then(searchTarget?.modifier ?: Modifier)
         .then(if (nodeClicks == null) Modifier else Modifier.onGloballyPositioned { nodeClicks.coordinates = it })
         .markdownInlineInteractionSemantics(resolved.interactions, resolved.semanticsText)
-    val onTextLayout: (org.tiqian.core.LayoutResult) -> Unit = remember(nodeClicks) {
-        { layout -> nodeClicks?.layout = layout }
+    val onTextLayout: (org.tiqian.core.LayoutResult) -> Unit = if (searchTarget == null && nodeClicks == null) {
+        IgnoreMarkdownTextLayout
+    } else remember(searchTarget, nodeClicks, resolved) {
+        { layout ->
+            searchTarget?.updateLayout(layout, resolved)
+            nodeClicks?.layout = layout
+        }
     }
     val effectiveParagraph = if (markdownStyle.insetProse) insetProseParagraphStyle(paragraphStyle ?: ParagraphStyle(firstLineIndent = org.tiqian.core.Ic.Zero)) else paragraphStyle
     if (effectiveParagraph == null) {
@@ -120,7 +142,7 @@ internal fun MarkdownTextBlock(
             inlineBackgrounds = inlineBackgrounds,
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
-            precomputedLayout = precomputed?.layout,
+            precomputedLayout = precomputedLayout,
             onTextLayout = onTextLayout,
         )
     } else {
@@ -133,7 +155,7 @@ internal fun MarkdownTextBlock(
             inlineBackgrounds = inlineBackgrounds,
             inlineDecorations = inlineDecorations,
             measurer = paragraphMeasurer,
-            precomputedLayout = precomputed?.layout,
+            precomputedLayout = precomputedLayout,
             onTextLayout = onTextLayout,
         )
     }
@@ -141,7 +163,7 @@ internal fun MarkdownTextBlock(
 
 internal fun ResolvedMarkdownText.toCjkInlineObjects(
     density: androidx.compose.ui.unit.Density,
-): List<CjkInlineObject> = tiqianInlineObjects.map { resolvedObject ->
+): List<CjkInlineObject> = (tiqianInlineObjects.map { resolvedObject ->
     val metrics = requireNotNull(resolvedObject.content.metrics)
     CjkInlineObject(
                 range = TextRange(resolvedObject.start, resolvedObject.endExclusive),
@@ -213,4 +235,21 @@ internal fun ResolvedMarkdownText.toCjkInlineObjects(
                     }
                 },
     )
-}
+} + endMarkers.map { marker ->
+            CjkInlineObject(
+                range = TextRange(marker.endExclusive - 1, marker.endExclusive),
+                advance = marker.marker.gap + marker.marker.size,
+                ascent = marker.marker.size + marker.marker.offset,
+                descent = (-marker.marker.offset).coerceAtLeast(0.dp),
+            ) {
+                val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+                Canvas(Modifier.fillMaxSize().clipToBounds()) {
+                    val side = marker.marker.size.toPx()
+                    translate(left = if (rtl) 0f else marker.marker.gap.toPx()) {
+                        clipRect(right = side, bottom = side) {
+                            with(marker.marker.painter) { draw(Size(side, side), colorFilter = ColorFilter.tint(marker.marker.color)) }
+                        }
+                    }
+                }
+            }
+        }).sortedBy { it.range.start }

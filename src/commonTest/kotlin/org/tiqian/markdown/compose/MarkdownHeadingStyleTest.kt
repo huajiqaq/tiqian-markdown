@@ -9,7 +9,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -113,7 +113,7 @@ class MarkdownHeadingStyleTest {
         assertEquals(FontWeight.SemiBold, style.codeLanguage.fontWeight)
         assertSp(13f, style.caption.fontSize)
         assertSp(21.125f, style.caption.lineHeight)
-        assertEquals(0.5f.ic, style.captionHorizontalIndent)
+        assertEquals(Ic(0.5f), style.captionHorizontalIndent)
     }
 
     private fun assertSp(expected: Float, actual: TextUnit) {

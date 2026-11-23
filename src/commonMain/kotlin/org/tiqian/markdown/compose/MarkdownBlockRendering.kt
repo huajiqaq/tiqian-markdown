@@ -109,7 +109,7 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res
@@ -408,7 +408,7 @@ private fun MarkdownListBlock(
     val markerMeasurer = rememberMarkdownParagraphMeasurer()
     val markerMeasureParagraphStyle = remember {
         ParagraphStyle(
-            firstLineIndent = 0.ic,
+            firstLineIndent = Ic.Zero,
             lineLengthGrid = LineLengthGrid(enabled = false),
         )
     }
@@ -457,10 +457,7 @@ private fun MarkdownListBlock(
     val markerWidth = with(density) { widestMarkerWidthPx.toDp() }
     // This whole-cell band controls only where left-aligned bullets/tasks sit.
     // It is not the width subtracted from the body measure.
-    val markerAlignmentBand = ceil(widestMarkerWidthPx / coreMarkerTextStyle.fontSize)
-        .toInt()
-        .coerceAtLeast(1)
-        .ic
+    val markerAlignmentBand = Ic(ceil(widestMarkerWidthPx / coreMarkerTextStyle.fontSize).toInt().coerceAtLeast(1).toFloat())
     val bodyLineHeight = style.bodyLineHeightSpOrNull()?.let { lineHeight ->
         with(density) { lineHeight.toDp() }
     }

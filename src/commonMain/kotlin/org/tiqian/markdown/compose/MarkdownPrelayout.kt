@@ -27,7 +27,7 @@ import org.tiqian.compose.measureWithInlineContent
 import org.tiqian.core.LayoutConstraints
 import org.tiqian.core.LayoutResult
 import org.tiqian.core.ParagraphStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 
 internal data class MarkdownPrecomputedLayout(
     val layout: LayoutResult,
@@ -358,7 +358,7 @@ private fun precomputeMarkdownBlock(
     return precomputeMarkdownTextLayout(
         text = text,
         textStyle = textStyle,
-        paragraphStyle = ParagraphStyle(firstLineIndent = 0.ic),
+        paragraphStyle = ParagraphStyle(firstLineIndent = Ic.Zero),
         style = style,
         inlineSlots = inlineSlots,
         mathRuntime = mathRuntime,

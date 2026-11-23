@@ -32,6 +32,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -56,6 +58,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -99,7 +102,7 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
+import org.tiqian.core.Ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res
@@ -120,7 +123,7 @@ import kotlin.math.roundToInt
 // recorded rationale. Width negotiation keeps columns on the em grid so the quantized
 // measure never leaves per-line slack.
 internal val markdownTableParagraphStyle = ParagraphStyle(
-    firstLineIndent = 0.ic,
+    firstLineIndent = Ic.Zero,
     lastLineAlignment = LastLineAlignment.Start,
 )
 
@@ -271,7 +274,7 @@ fun DefaultMarkdownTable(
             with(density) { width.toDp() }
         }
         val centeringWidth = maxOf(maxWidth, tableWidth)
-        Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) {
+        HorizontallyScrollableTable {
             Box(Modifier.width(centeringWidth)) {
                 Column(
                     Modifier
@@ -399,3 +402,23 @@ fun DefaultMarkdownTable(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun HorizontallyScrollableTable(content: @Composable () -> Unit) {
+    val parent = LocalBringIntoViewSpec.current
+    val state = LocalMarkdownTextSearchDocument.current?.state
+    val horizontal = remember(parent, state) {
+        if (state == null) parent else object : BringIntoViewSpec {
+            override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
+                if (state.activeRelocation() != null) {
+                    // Search insets and the persistent centering decision belong to the vertical ancestor.
+                    super.calculateScrollDistance(offset, size, containerSize)
+                } else {
+                    parent.calculateScrollDistance(offset, size, containerSize)
+                }
+        }
+    }
+    CompositionLocalProvider(LocalBringIntoViewSpec provides horizontal) {
+        Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) { content() }
+    }
+}

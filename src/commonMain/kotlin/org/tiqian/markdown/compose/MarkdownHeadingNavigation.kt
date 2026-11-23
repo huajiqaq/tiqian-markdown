@@ -9,8 +9,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.tiqian.markdown.MarkdownBlock
 import org.tiqian.markdown.MarkdownContainerBlock
@@ -29,15 +31,32 @@ internal class MarkdownHeadingNavigation(
 ) {
     val selectedTabs = mutableStateMapOf<MarkdownNodeKey, Int>()
     private val requesters = mutableMapOf<MarkdownNodeKey, BringIntoViewRequester>()
-    private val pending = mutableSetOf<MarkdownNodeKey>()
+    private var requestedKey: MarkdownNodeKey? = null
+    private var relocation: Job? = null
 
     fun register(key: MarkdownNodeKey, requester: BringIntoViewRequester) {
         requesters[key] = requester
-        if (pending.remove(key)) scope.launch { requester.bringIntoView() }
+        if (requestedKey == key) relocate(key, requester, awaitPlacement = true)
     }
 
     fun unregister(key: MarkdownNodeKey, requester: BringIntoViewRequester) {
-        if (requesters[key] === requester) requesters.remove(key)
+        if (requesters[key] !== requester) return
+        requesters.remove(key)
+        if (requestedKey == key) {
+            relocation?.cancel()
+            requestedKey = null
+        }
+    }
+
+    private fun relocate(key: MarkdownNodeKey, requester: BringIntoViewRequester, awaitPlacement: Boolean) {
+        relocation?.cancel()
+        relocation = scope.launch {
+            if (awaitPlacement) withFrameNanos { }
+            if (requesters[key] === requester) {
+                requester.bringIntoView()
+                requestedKey = null
+            }
+        }
     }
 
     fun activateAncestors(key: MarkdownNodeKey): MarkdownNodeKey? {
@@ -57,10 +76,12 @@ internal class MarkdownHeadingNavigation(
 
     fun navigate(key: MarkdownNodeKey) {
         val ownerKey = activateAncestors(key) ?: return
+        requestedKey = key
         val requester = requesters[key]
-        if (requester != null) scope.launch { requester.bringIntoView() }
-        else {
-            pending += key
+        if (requester != null) {
+            relocate(key, requester, awaitPlacement = false)
+        } else {
+            relocation?.cancel()
             materialize(ownerKey)
         }
     }

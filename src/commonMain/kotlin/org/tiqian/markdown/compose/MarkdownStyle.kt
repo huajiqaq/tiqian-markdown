@@ -18,9 +18,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import org.tiqian.clreq.ClreqProfile
 import org.tiqian.clreq.KinsokuMode
 import org.tiqian.core.Ic
-import org.tiqian.core.ic
 
 /** Colour-source choice; layout geometry is identical in both modes. */
 enum class MarkdownPalette {
@@ -121,11 +121,11 @@ data class MarkdownProseMeasure(
     /** Disable when the host already owns and constrains the prose measure. */
     val enabled: Boolean = true,
     /** Below this available measure, prose uses the whole integral-cell width. */
-    val fluidStart: Ic = 32.ic,
+    val fluidStart: Ic = Ic(32f),
     /** Additional prose cells admitted whenever the available measure doubles. */
-    val growthPerDoubling: Ic = 8.ic,
+    val growthPerDoubling: Ic = Ic(8f),
     /** Absolute horizontal-writing limit. */
-    val maximum: Ic = 48.ic,
+    val maximum: Ic = Ic(48f),
 ) {
     init {
         require(fluidStart.count.isFinite() && fluidStart.count > 0f)
@@ -234,11 +234,13 @@ data class MarkdownStyle(
     /** Additional text style inherited by prose nested inside a block quote. */
     val quoteText: TextStyle = TextStyle(),
     /** Minimum list-body indent at ordinary measures. */
-    val listContentIndent: Ic = 1.ic,
+    val listContentIndent: Ic = Ic(1f),
     /** Minimum list-body indent only on a long measure. */
-    val listLongContentIndent: Ic = 2.ic,
+    val listLongContentIndent: Ic = Ic(2f),
     /** Long-measure boundary, shared with Tiqian's measure-adaptive strict CLREQ tier. */
-    val listLongMeasureBreakpoint: Ic = KinsokuMode.MeasureAdaptive().strictAboveEm.ic,
+    val listLongMeasureBreakpoint: Ic = Ic(
+        (ClreqProfile.MainlandHorizontal.kinsokuMode as KinsokuMode.MeasureAdaptive).strictAboveEm,
+    ),
     /** Tight items continue on the normal body-line rhythm without a synthetic gap. */
     val tightListItemSpacing: Dp = 0.dp,
     val tightListItemSpacingBodyLines: Float = 0f,
@@ -268,7 +270,7 @@ data class MarkdownStyle(
     val tableHeaderBackground: Color = Color(0xFFF6F8FA),
     val tableCellPadding: Dp = 8.dp,
     /** Readable content floor for a non-short table column; padding is added separately. */
-    val tableReadableColumnWidth: Ic = 4.ic,
+    val tableReadableColumnWidth: Ic = Ic(4f),
     /** Preferred-width cap for one column before its text is allowed to wrap. */
     val tableColumnWidth: Dp = 160.dp,
     val tableText: TextStyle = body.merge(
@@ -291,9 +293,9 @@ data class MarkdownStyle(
         ),
     ),
     /** Figure/table captions inset by half a body ideographic character on both sides. */
-    val captionHorizontalIndent: Ic = 0.5f.ic,
+    val captionHorizontalIndent: Ic = Ic(0.5f),
     /** A narrow image stays centred while its caption keeps a readable line measure. */
-    val figureCaptionMinimumWidth: Ic = 12.ic,
+    val figureCaptionMinimumWidth: Ic = Ic(12f),
     val thematicBreakColor: Color = Color(0xFFD8DEE4),
     val headingScales: MarkdownHeadingScales = MarkdownHeadingScales(),
     val headingSpacing: MarkdownHeadingSpacing = MarkdownHeadingSpacing(),

@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -98,7 +99,6 @@ import org.tiqian.core.LastLineAlignment
 import org.tiqian.core.LineLengthGrid
 import org.tiqian.core.ParagraphStyle
 import org.tiqian.core.TextStyle as CoreTextStyle
-import org.tiqian.core.ic
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 import org.tiqian.markdown.compose.generated.resources.Res
@@ -177,16 +177,36 @@ fun DefaultMarkdownImageBlock(
                 } else {
                     null
                 }
-                val imageWidth = widthHint?.dp?.coerceAtMost(maxWidth) ?: maxWidth
-                val captionWidth = maxOf(imageWidth, style.figureCaptionMinimumWidthDp())
+                val naturalWidth = widthHint?.dp?.coerceAtMost(maxWidth) ?: maxWidth
+                val widthLimit = naturalWidth.coerceAtMost(imageContent.maxDisplayWidth)
+                val maxImageHeight = imageContent.maxDisplayHeight
+                val imageWidth = if (ratio != null && ratio > 0f) {
+                    widthLimit.coerceAtMost(maxImageHeight * ratio)
+                } else {
+                    widthLimit
+                }
+                val captionWidth = maxOf(naturalWidth, style.figureCaptionMinimumWidthDp())
                     .coerceAtMost(maxWidth)
                 val imageShape = RoundedCornerShape(style.imageCornerRadius)
-                val imageModifier = Modifier
+                val imageBounds = Modifier
                     .width(imageWidth)
-                    .then(if (ratio != null && ratio > 0f) Modifier.aspectRatio(ratio) else Modifier)
+                    .then(if (maxImageHeight != Dp.Infinity) Modifier.heightIn(max = maxImageHeight) else Modifier)
+                val imageModifier = when {
+                    ratio == null || ratio <= 0f -> imageBounds
+                    // aspectRatio falls back to an unconstrained size when no positive pixel size fits.
+                    with(LocalDensity.current) {
+                        minOf(maxHeight, maxImageHeight).roundToPx() == 0 ||
+                            (imageWidth.roundToPx() / ratio).roundToInt() == 0
+                    } -> Modifier.size(0.dp)
+                    else -> imageBounds.aspectRatio(ratio)
+                }
                     .border(style.imageOutlineWidth, style.imageOutlineColor, imageShape)
                     .clip(imageShape)
-                    .openMarkdownImageOnClick(viewerState, block, imageGallery, nodeClick)
+                    .openMarkdownImageOnClick(
+                        viewerState, block, imageGallery,
+                        onNodeClick = nodeClick,
+                        onLongClick = imageContent.onLongClick,
+                    )
                 Column(
                     modifier = Modifier.width(captionWidth),
                     horizontalAlignment = Alignment.CenterHorizontally,

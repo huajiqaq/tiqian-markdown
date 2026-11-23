@@ -17,6 +17,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
@@ -43,6 +44,7 @@ import org.tiqian.compose.CjkInlineBackgroundMetricPolicy
 import org.tiqian.compose.CjkInlineDecoration
 import org.tiqian.compose.CjkInlineDecorationStyle
 import org.tiqian.compose.addCjkInteractionOnlyAnnotation
+import org.tiqian.compose.addCjkRenderOnlyInlineObject
 import org.tiqian.compose.addCjkInlineAttachment
 import org.tiqian.compose.addTechnicalInlineAnnotation
 import org.tiqian.core.InlineAttachment
@@ -138,7 +140,25 @@ data class MarkdownCustomInlinePresentation(
     val decoration: MarkdownInlineDecoration? = null,
     val onClick: ((text: String) -> Unit)? = null,
     val accessibilityLabel: ((text: String) -> String)? = null,
+    /** 在范围末端之后真实占据行内空间；内部排版占位不进入逻辑文本、复制或选择索引。 */
+    val endMarker: MarkdownInlineEndMarker? = null,
 )
+
+/** 宿主提供的行内末端标记；由 CjkInlineObject 度量并参与断行。 */
+data class MarkdownInlineEndMarker(
+    val painter: Painter,
+    val color: Color,
+    val size: Dp = 8.dp,
+    val gap: Dp = 3.dp,
+    /** 标记相对行基线的上移距离。 */
+    val offset: Dp = 2.dp,
+) {
+    init {
+        require(size.value.isFinite() && size.value > 0f)
+        require(gap.value.isFinite() && gap.value >= 0f)
+        require(offset.value.isFinite() && (size + offset).value >= 0f)
+    }
+}
 
 sealed interface MarkdownInlineDecoration {
     data class DashedUnderline(
@@ -162,8 +182,9 @@ internal data class ResolvedMarkdownText(
     val backgrounds: List<ResolvedInlineBackground>,
     val decorations: List<ResolvedInlineDecoration>,
     val interactions: List<ResolvedInlineInteraction>,
-    /** Source range edges in raw LayoutResult coordinates, including source-backed replacements. */
+    /** Source edges in raw LayoutResult coordinates: starts skip inserted slots, ends stop before them. */
     val sourceToRenderedOffset: (Int, Boolean) -> Int = { offset, _ -> offset },
+    val endMarkers: List<ResolvedInlineEndMarker> = emptyList(),
     val hiddenSpoilers: List<ResolvedMarkdownSpoiler> = emptyList(),
     /** Accessibility projection only; drawing, selection and events retain the source text. */
     val semanticsText: AnnotatedString? = null,
@@ -189,6 +210,11 @@ internal data class ResolvedInlineDecoration(
     val start: Int,
     val endExclusive: Int,
     val decoration: MarkdownInlineDecoration,
+)
+
+internal data class ResolvedInlineEndMarker(
+    val endExclusive: Int,
+    val marker: MarkdownInlineEndMarker,
 )
 
 internal data class ResolvedInlineBackground(
@@ -506,6 +532,7 @@ private fun buildResolvedMarkdownText(
     val base = text.buildInlineBase(nonOverlappingReplacements)
     val backgrounds = mutableListOf<ResolvedInlineBackground>()
     val decorations = mutableListOf<ResolvedInlineDecoration>()
+    val endMarkers = mutableListOf<ResolvedInlineEndMarker>()
     val interactions = mutableListOf<ResolvedInlineInteraction>()
     val hiddenSpoilers = spoilerReveals.mapNotNull { (index, reveal) ->
         val range = text.spans[index].range
@@ -533,6 +560,7 @@ private fun buildResolvedMarkdownText(
         }
 
         text.spans.forEachIndexed { index, span ->
+            if (span.range.start == span.range.endExclusive) return@forEachIndexed
             val start = mapOffset(span.range.start, nonOverlappingReplacements, end = false).coerceIn(0, length)
             val end = mapOffset(span.range.endExclusive, nonOverlappingReplacements, end = true).coerceIn(start, length)
             if (start == end) return@forEachIndexed
@@ -702,6 +730,9 @@ private fun buildResolvedMarkdownText(
                     presentation.decoration?.let { decoration ->
                         decorations += ResolvedInlineDecoration(start, end, decoration)
                     }
+                    presentation.endMarker?.let { marker ->
+                        endMarkers += ResolvedInlineEndMarker(end, marker)
+                    }
                 }
             }
         }
@@ -748,8 +779,9 @@ private fun buildResolvedMarkdownText(
         decorations = decorations,
         interactions = interactions,
         sourceToRenderedOffset = { offset, end -> mapOffset(offset, nonOverlappingReplacements, end) },
+        endMarkers = endMarkers,
         hiddenSpoilers = hiddenSpoilers,
-    )
+    ).withInlineEndMarkerProjection()
 }
 
 private fun MarkdownText.buildInlineBase(replacements: List<InlineReplacement>): AnnotatedString {
@@ -818,4 +850,48 @@ internal fun Modifier.markdownInlineInteractionSemantics(
         text = semanticsText
         customActions = actions
     }
+}
+
+/** Insert slots only into the renderer projection; MarkdownText.value and source spans stay intact. */
+private fun ResolvedMarkdownText.withInlineEndMarkerProjection(): ResolvedMarkdownText {
+    if (endMarkers.isEmpty()) return this
+    val ordered = endMarkers.sortedBy { it.endExclusive }
+    // 同一原文边界的所有插槽都在范围起点之前、终点之后。
+    fun map(offset: Int, after: Boolean): Int {
+        val split = ordered.binarySearch {
+            if (it.endExclusive < offset || after && it.endExclusive == offset) -1 else 1
+        }
+        return offset + (-split - 1)
+    }
+    val sourceToBaseOffset = sourceToRenderedOffset
+    val text = StringBuilder(annotated.length + ordered.size)
+    var cursor = 0
+    val markers = ordered.map { marker ->
+        text.append(annotated.text, cursor, marker.endExclusive)
+        text.append('\uFFFC')
+        cursor = marker.endExclusive
+        marker.copy(endExclusive = text.length)
+    }
+    text.append(annotated.text, cursor, annotated.length)
+
+    // 切分 AnnotatedString 会把同一个跨槽注解（如整段读音）复制到每个子串。
+    val ranges = mutableListOf<AnnotatedString.Range<AnnotatedString.Annotation>>()
+    annotated.flatMapAnnotations { range ->
+        val start = map(range.start, after = true)
+        val end = if (range.start == range.end) start else map(range.end, after = false)
+        ranges += AnnotatedString.Range(range.item, start, end, range.tag)
+        emptyList()
+    }
+    val output = AnnotatedString.Builder(AnnotatedString(text.toString(), ranges))
+    markers.forEach { output.addCjkRenderOnlyInlineObject(it.endExclusive - 1, it.endExclusive) }
+    return copy(
+        annotated = output.toAnnotatedString(),
+        tiqianInlineObjects = tiqianInlineObjects.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        backgrounds = backgrounds.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        decorations = decorations.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        interactions = interactions.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        hiddenSpoilers = hiddenSpoilers.map { it.copy(start = map(it.start, true), endExclusive = map(it.endExclusive, false)) },
+        sourceToRenderedOffset = { offset, end -> map(sourceToBaseOffset(offset, end), after = !end) },
+        endMarkers = markers,
+    )
 }

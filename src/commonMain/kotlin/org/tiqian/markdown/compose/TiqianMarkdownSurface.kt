@@ -1,6 +1,7 @@
 package org.tiqian.markdown.compose
 
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.RowScope
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -36,7 +38,9 @@ import org.tiqian.markdown.placeFootnotes
  * The renderer owns scrolling, whole-document selection and its image-viewer session. Hosts only
  * adapt their document model and supply platform services through slots and [imageProvider].
  * Pass [selectionState] to read the current selection, for example from host context-menu items.
+ * Optional [searchState] finds and reveals renderer-owned prose without modifying that selection.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun TiqianMarkdownSurface(
     document: MarkdownRenderDocument,
@@ -57,6 +61,7 @@ fun TiqianMarkdownSurface(
     codeHighlighter: MarkdownCodeHighlighter = DefaultMarkdownCodeHighlighter,
     header: (@Composable () -> Unit)? = null,
     footer: (@Composable () -> Unit)? = null,
+    searchState: MarkdownTextSearchState? = null,
     onNodeClick: ((MarkdownNodeClickEvent) -> Boolean)? = null,
 ) {
     val windowHeightPx = LocalWindowInfo.current.containerSize.height
@@ -68,9 +73,20 @@ fun TiqianMarkdownSurface(
             document.placeFootnotes(footnotePlacement)
         }
     }
+    val searchDocument = if (searchState == null) null else remember(searchState, placedBlocks, slots, selectionState) {
+        MarkdownTextSearchDocument(searchState, placedBlocks, slots, selectionState)
+    }
+    // Selection clears on document identity changes. Search/slot toggles do not change its
+    // logical text projection, so keep this identity tied only to the placed document.
     val selectionDocument = remember(placedBlocks) {
         markdownTraceSection("TiqianMarkdown.selectionDocument") {
-            CjkSelectionDocument(placedBlocks.markdownSelectionFragments())
+            CjkSelectionDocument(searchDocument?.selectionFragments ?: placedBlocks.markdownSelectionFragments())
+        }
+    }
+    if (searchDocument != null) {
+        DisposableEffect(searchDocument) {
+            searchDocument.state.attach(searchDocument)
+            onDispose { searchDocument.state.detach(searchDocument) }
         }
     }
     val currentScrollOffsetPx = remember(scrollState) { { scrollState.value } }
@@ -89,7 +105,9 @@ fun TiqianMarkdownSurface(
         ),
         scrollInProgress = scrollState.isScrollInProgress,
         scrollOffsetPx = currentScrollOffsetPx,
-        requestedOwnerKeys = requestedOwnerKeys.keys + selectionState.activeGestureOwnerKeys,
+        requestedOwnerKeys = (requestedOwnerKeys.keys + selectionState.activeGestureOwnerKeys).let { owners ->
+            searchState?.requestedOwnerKey?.let { owners + it } ?: owners
+        },
         onMaterializeOwner = { ownerKey ->
             if (requestedOwnerKeys.containsKey(ownerKey)) false else {
                 requestedOwnerKeys[ownerKey] = Unit
@@ -99,7 +117,15 @@ fun TiqianMarkdownSurface(
         compensateScrollBy = { deltaPx -> scrollState.dispatchRawDelta(deltaPx.toFloat()) },
     )
     val article: @Composable () -> Unit = {
-        CompositionLocalProvider(LocalMarkdownDeferredLayout provides deferredLayout) {
+        CompositionLocalProvider(
+            LocalBringIntoViewSpec provides if (enableScroll && searchState != null) {
+                rememberMarkdownTextSearchBringIntoViewSpec(searchState)
+            } else {
+                LocalBringIntoViewSpec.current
+            },
+            LocalMarkdownDeferredLayout provides deferredLayout,
+            LocalMarkdownTextSearchDocument provides searchDocument,
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()

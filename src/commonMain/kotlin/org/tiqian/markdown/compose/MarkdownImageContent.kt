@@ -6,7 +6,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 
 /** Loading information supplied by the host's image library. */
 enum class MarkdownImageLoadState {
@@ -24,8 +26,25 @@ class MarkdownImageContent(
     val intrinsicSize: IntSize?,
     val loadState: MarkdownImageLoadState,
     val progress: Float? = null,
+    /** 正文预览宽度上限，不改变原图尺寸、图注或查看器。 */
+    val maxDisplayWidth: Dp = Dp.Infinity,
+    /** 正文预览高度上限，已知比例时等比缩小；默认不限制。 */
+    val maxDisplayHeight: Dp = Dp.Infinity,
+    /** 宿主的正文图片长按动作；默认保持仅点击查看。 */
+    val onLongClick: (() -> Unit)? = null,
     val content: @Composable (Modifier) -> Unit,
-)
+) {
+    constructor(
+        intrinsicSize: IntSize?,
+        loadState: MarkdownImageLoadState,
+        progress: Float? = null,
+        content: @Composable (Modifier) -> Unit,
+    ) : this(intrinsicSize, loadState, progress, Dp.Infinity, Dp.Infinity, null, content)
+
+    init {
+        require(maxDisplayWidth >= 0.dp && maxDisplayHeight >= 0.dp)
+    }
+}
 
 typealias MarkdownImageProvider = @Composable (MarkdownImageBlock) -> MarkdownImageContent
 
